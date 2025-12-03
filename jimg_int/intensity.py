@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pingouin as pg
-import scipy.stats as stats
+from scipy import stats
 from scipy.stats import chi2_contingency
 from tqdm import tqdm
 
@@ -20,6 +20,102 @@ random.seed(42)
 
 
 class FeatureIntensity(ImageTools):
+    r"""
+    Class for quantitative analysis of pixel intensity and size measurements
+    in 2D/3D biological images. Supports projection of 3D stacks, mask-based
+    intensity normalization, region size estimation and metadata extraction.
+
+    Parameters
+    ----------
+    input_image : ndarray, optional
+        Input image or 3D stack for analysis. If 3D, projection must be applied.
+
+    image : ndarray, optional
+        2D projected image (internal use).
+
+    normalized_image_values : dict, optional
+        Dictionary storing normalized intensity statistics.
+
+    mask : ndarray, optional
+        Binary mask of region of interest (ROI).
+
+    background_mask : ndarray, optional
+        Binary mask used for background estimation. If not provided, `mask` is used.
+
+    typ : {"avg", "median", "std", "var", "max", "min"}, optional
+        Projection type for 3D stacks. Default is `"avg"`.
+
+    size_info : dict, optional
+        Dictionary storing ROI size measurements.
+
+    correction_factor : float, optional
+        Normalization correction factor applied to background intensity.
+        Must satisfy 0 < factor < 1. Default is 0.1.
+
+    img_type : str, optional
+        Image type metadata.
+
+    scale : float, optional
+        Pixel resolution in physical units (e.g. µm/px). Used in size calculations.
+
+    stack_selection : list of int, optional
+        List of Z-indices to remove when projecting a 3D image.
+
+    Attributes
+    ----------
+    input_image : ndarray or None
+        Loaded input image.
+
+    image : ndarray or None
+        Projected 2D image.
+
+    mask : ndarray or None
+        Region of interest mask.
+
+    background_mask : ndarray or None
+        Background normalization mask.
+
+    scale : float or None
+        Scale value for size estimation.
+
+    normalized_image_values : dict or None
+        Dictionary containing intensity metrics.
+
+    size_info : dict or None
+        Dictionary with ROI size information.
+
+    typ : str
+        Selected projection type for 3D images.
+
+    stack_selection : list of int
+        Z-levels excluded from projection.
+
+    Notes
+    -----
+    The intensity normalization formula applied per pixel is:
+
+    .. math::
+
+        R_{i,j} = T_{i,j} - \\left( \\mu_B (1 + c) \\right)
+
+    where
+    * ``T_{i,j}`` – pixel intensity in ROI
+    * ``μ_B`` – mean intensity in background region
+    * ``c`` – correction factor
+    * ``R_{i,j}`` – normalized pixel intensity
+
+    Examples
+    --------
+    Load a 3D image, mask and compute statistics:
+
+    >>> fi = FeatureIntensity()
+    >>> fi.load_image_3D("stack.tiff")
+    >>> fi.load_mask_("mask.png")
+    >>> fi.set_projection("median")
+    >>> fi.run_calculations()
+    >>> results = fi.get_results()
+    >>> results["intensity"]["norm_mean"]
+    """
 
     def __init__(
         self,
@@ -35,40 +131,140 @@ class FeatureIntensity(ImageTools):
         scale=None,
         stack_selection=None,
     ):
+        """
+        Initialize a FeatureIntensity analysis instance.
+
+        Parameters
+        ----------
+        input_image : ndarray, optional
+            Input image or 3D stack used for analysis. If the image is 3D, a
+            projection will be computed depending on the `typ` parameter.
+
+        image : ndarray, optional
+            2D image buffer used internally after projection of the input image.
+            Should not be set manually.
+
+        normalized_image_values : dict, optional
+            Dictionary containing normalized intensity statistics. Usually filled
+            automatically after running `run_calculations()`.
+
+        mask : ndarray, optional
+            Binary mask of the target region of interest (ROI). Required for
+            intensity and size calculations.
+
+        background_mask : ndarray, optional
+            Binary mask specifying the background region used to compute the
+            normalization threshold. If not provided, the ROI mask is also used
+            as the background reference.
+
+        typ : {"avg", "median", "std", "var", "max", "min"}, optional
+            Projection method for 3D images. Determines how the z-stack is
+            collapsed into a 2D image. Default is `"avg"`.
+
+        size_info : dict, optional
+            Dictionary storing computed size metrics of the ROI. Populated after
+            invoking `size_calculations()`.
+
+        correction_factor : float, optional
+            Correction term used during intensity normalization. Must satisfy
+            0 < correction_factor < 1. Default is 0.1.
+
+        img_type : str, optional
+            Optional metadata about the image type (e.g., "tiff", "png").
+
+        scale : float, optional
+            Pixel resolution in physical units (e.g., µm/px). Required for
+            real-size estimation in `size_calculations()`.
+
+        stack_selection : list of int, optional
+            Indices of z-planes to exclude during projection of a 3D stack.
+
+        Notes
+        -----
+        Values not provided are initialized to `None`, except for `typ`, which
+        defaults to `"avg"`, and `correction_factor`, which defaults to 0.1.
+
+        The class is designed to be populated by loading functions:
+        `load_image_()`, `load_image_3D()`, `load_mask_()`,
+        and optionally `load_normalization_mask_()` and `load_JIMG_project_()`.
+        """
 
         self.input_image = input_image or None
+        """ Input image or 3D stack used for analysis. If the image is 3D, a
+         projection will be computed depending on the `typ` parameter."""
+
         self.image = image or None
+        """  2D image buffer used internally after projection of the input image.
+          Should not be set manually."""
+
         self.normalized_image_values = normalized_image_values or None
+        """Dictionary containing normalized intensity statistics. Usually filled
+        automatically after running `run_calculations()`."""
+
         self.mask = mask or None
+        """Binary mask of the target region of interest (ROI). Required for
+        intensity and size calculations."""
+
         self.background_mask = background_mask or None
+        """ Binary mask specifying the background region used to compute the
+         normalization threshold. If not provided, the ROI mask is also used
+         as the background reference."""
+
         self.typ = typ or "avg"
+        """Projection method for 3D images. Determines how the z-stack is
+        collapsed into a 2D image. Default is `"avg"`."""
+
         self.size_info = size_info or None
+        """Dictionary storing computed size metrics of the ROI. Populated after
+        invoking `size_calculations()`."""
+
         self.correction_factor = correction_factor or 0.1
+        """ Correction term used during intensity normalization. Must satisfy
+         0 < correction_factor < 1. Default is 0.1."""
+
         self.scale = scale or None
+        """ Pixel resolution in physical units (e.g., µm/px). Required for
+         real-size estimation in `size_calculations()`."""
+
         self.stack_selection = stack_selection or []
+        """Indices of z-planes to exclude during projection of a 3D stack."""
 
     @property
     def current_metadata(self):
-        """
-        This property returns current metadata parameters.
+        r"""
+        Return current metadata parameters used in image processing and normalization.
 
+        Returns
+        -------
+        tuple
+            A tuple containing:
 
-        Returns:
-            projection_type (str) - type of data projection, if 3D-image
-            correction_factor (str) - correction factor for backgroud separation during pixels intensity normalization
-                The formula applied for each target_mask_pixel is:
+            projection_type : str
+                Projection method used for 3D image reduction (e.g., "avg", "median").
 
-                    Result_{i,j} = T_{i,j} - (mean(B) * (1 + c))
+            correction_factor : float
+                Correction factor used for background subtraction during intensity
+                normalization. The applied formula is:
 
-                Where:
-                * Result_{i,j} – the result value for each pixel (i,j) in the target mask
-                * T_{i,j} – intensity value of pixel (i,j) in the target mask
-                * mean(B) – the mean intensity of the pixels in the normalization_mask
-                * c – correction factor
+                .. math::
 
-            scale (str) - scale loaded using the load_JIMG_project_() method or set by the set_scale() method
-            stack_selection (list) - list of partial z-axis images from the full 3D-image to exclude from the projection
+                    R_{i,j} = T_{i,j} - ( \mu_B (1 + c) )
 
+                where
+                * ``R_{i,j}`` — normalized pixel intensity
+                * ``T_{i,j}`` — original pixel intensity
+                * ``μ_B`` — mean background intensity
+                * ``c`` — correction factor
+            scale : float or None
+                Pixel resolution (unit/px), loaded via `load_JIMG_project_()` or set manually
+                using `set_scale()`.
+
+            stack_selection : list of int
+                Indices of z-slices excluded from projection of a 3D image.
+
+        Notes
+        -----
+        This property also prints the metadata values to the console for quick inspection.
         """
 
         print(f"Projection type: {self.typ}")
@@ -80,11 +276,23 @@ class FeatureIntensity(ImageTools):
 
     def set_projection(self, projection: str):
         """
-        This method sets 'projection' parameter. The projection is a parameter used for 3D-image projection to 1D-image.
+        Set the projection method for 3D image stack reduction.
 
-        Args:
-           projection (str) - the projection value ['avg', 'median', 'std', 'var', 'max', 'min']. Default: 'avg'
+        Parameters
+        ----------
+        projection : {"avg", "median", "std", "var", "max", "min"}
+            Projection method to reduce a 3D image stack to a 2D image. Default is `"avg"`.
 
+        Notes
+        -----
+        This method updates the `typ` attribute of the class. The selected projection
+        determines how the z-stack is collapsed:
+        - `"avg"` : average intensity across slices
+        - `"median"` : median intensity across slices
+        - `"std"` : standard deviation across slices
+        - `"var"` : variance across slices
+        - `"max"` : maximum intensity across slices
+        - `"min"` : minimum intensity across slices
         """
 
         t = ["avg", "median", "std", "var", "max", "min"]
@@ -94,24 +302,28 @@ class FeatureIntensity(ImageTools):
             print(f"\nProvided parameter is incorrect. Avaiable projection types: {t}")
 
     def set_correction_factorn(self, factor: float):
-        """
-        This method sets 'correction_factor' parameter.
-        The correction_factor is a parameter used for backgroud separation during pixels intensity normalization
+        r"""
+        Set the correction factor for background subtraction during intensity normalization.
 
-        The formula applied for each target_mask_pixel is:
+        Parameters
+        ----------
+        factor : float
+            Correction factor to adjust background subtraction. Must satisfy 0 < factor < 1.
+            Default is 0.1.
 
-            Result_{i,j} = T_{i,j} - (mean(B) * (1 + c))
+        Notes
+        -----
+        The correction is applied per pixel in the target mask using the formula:
 
-        Where:
-        * Result_{i,j} – the result value for each pixel (i,j) in the target mask
-        * T_{i,j} – intensity value of pixel (i,j) in the target mask
-        * mean(B) – the mean intensity of the pixels in the normalization_mask
-        * c – correction factor
+        .. math::
 
+            R_{i,j} = T_{i,j} - ( \mu_B (1 + c) )
 
-        Args:
-           factor (float) - the correction_factor value [factor < 1 and factor > 0]. Default: 0.1
-
+        where
+        * ``R_{i,j}`` — normalized pixel intensity
+        * ``T_{i,j}`` — original pixel intensity
+        * ``μ_B`` — mean intensity in the background mask
+        * ``c`` — correction factor
         """
 
         if factor < 1 and factor > 0:
@@ -123,41 +335,64 @@ class FeatureIntensity(ImageTools):
 
     def set_scale(self, scale):
         """
-        This method sets the 'scale' parameter. The scale is used to calculate the actual size of the tissue or organ.
+        Set the scale for converting pixel measurements to physical units.
 
-        The scale is also loaded using the load_JIMG_project_() method.
+        Parameters
+        ----------
+        scale : float
+            Pixel resolution in physical units (e.g., µm/px). Used to calculate the
+            actual size of the tissue or organ.
 
-        Args:
-           scale (float) - the scale value [um/px]
-
+        Notes
+        -----
+        The scale can also be automatically loaded from a JIMG project using
+        `load_JIMG_project_()`. This value is required for size calculations in
+        `size_calculations()`.
         """
 
         self.scale = scale
 
     def set_selection_list(self, rm_list: list):
         """
-        This method sets the 'rm_list' parameter. The 'rm_list' is used to exclude partial z-axis images from the full 3D image in the projection.
+        Set the list of z-slices to exclude when projecting a 3D image stack.
 
-        Args:
-           rm_list (list) - list of images to remove.
+        Parameters
+        ----------
+        rm_list : list of int
+            List of indices corresponding to z-slices that should be removed from
+            the full 3D image stack before projection.
 
+        Notes
+        -----
+        This updates the `stack_selection` attribute, which is used by the
+        `stack_selection_()` method during projection.
         """
 
         self.stack_selection = rm_list
 
     def load_JIMG_project_(self, path):
         """
-        This method loads a JIMG project. The project file must have the *.pjm extension.
+        Load a JIMG project from a `.pjm` file.
 
-        Args:
-            file_path (str) - path to the project file.
+        Parameters
+        ----------
+        file_path : str
+            Path to the JIMG project file. The file must have a `.pjm` extension.
 
-        Returns:
-            project (class) - loaded project object
+        Returns
+        -------
+        project : object
+            Loaded project object containing images and metadata.
 
-        Raises:
-            ValueError: If the file does not have a *.pjm extension.
+        Raises
+        ------
+        ValueError
+            If the provided file path does not point to a `.pjm` file.
 
+        Notes
+        -----
+        The method attempts to automatically set the `scale` and `stack_selection`
+        attributes from the project metadata if available.
         """
 
         path = os.path.abspath(path)
@@ -187,6 +422,18 @@ class FeatureIntensity(ImageTools):
             )
 
     def stack_selection_(self):
+        """
+        Remove selected z-slices from a 3D image stack based on `stack_selection`.
+
+        Notes
+        -----
+        Only works if `input_image` is a 3D ndarray. The slices with indices listed
+        in `stack_selection` are excluded from the stack. Updates `input_image`
+        in-place.
+
+        Prints a warning if `stack_selection` is empty.
+        """
+
         if len(self.input_image.shape) == 3:
             if len(self.stack_selection) > 0:
                 self.input_image = self.input_image[
@@ -200,6 +447,26 @@ class FeatureIntensity(ImageTools):
                 print("\nImages to remove from the stack were not selected!")
 
     def projection(self):
+        """
+        Project a 3D image stack into a 2D image using the method defined by `typ`.
+
+        Notes
+        -----
+        Updates the `image` attribute with the projected 2D result.
+
+        Supported projection types (`typ`):
+        - "avg" : mean intensity across slices
+        - "median" : median intensity across slices
+        - "std" : standard deviation across slices
+        - "var" : variance across slices
+        - "max" : maximum intensity across slices
+        - "min" : minimum intensity across slices
+
+        Raises
+        ------
+        AttributeError
+            If `input_image` is not defined.
+        """
 
         if self.typ == "avg":
             img = np.mean(self.input_image, axis=0)
@@ -222,6 +489,20 @@ class FeatureIntensity(ImageTools):
         self.image = img
 
     def detect_img(self):
+        """
+        Detect whether the input image is 2D or 3D and perform appropriate preprocessing.
+
+        Notes
+        -----
+        - For 3D images, applies `stack_selection_()` and then `projection()`.
+        - For 2D images, no projection is applied.
+        - Prints status messages indicating the type of image and applied operations.
+
+        Raises
+        ------
+        AttributeError
+            If `input_image` is not defined.
+        """
         check = len(self.input_image.shape)
 
         if check == 3:
@@ -239,11 +520,16 @@ class FeatureIntensity(ImageTools):
 
     def load_image_3D(self, path):
         """
-        This method loads an 3D-image (*.tiff) into the class.
+        Load a 3D image stack from a TIFF file.
 
-        Args:
-            path (str) - path to the *.tiff image.
+        Parameters
+        ----------
+        path : str
+            Path to the 3D image file (*.tiff) to be loaded.
 
+        Notes
+        -----
+        The loaded image is stored in the `input_image` attribute as a 3D ndarray.
         """
         path = os.path.abspath(path)
 
@@ -251,36 +537,49 @@ class FeatureIntensity(ImageTools):
 
     def load_image_(self, path):
         """
-        This method loads an image into the class.
+        Load a 2D image into the class.
 
-        Args:
-            path (str) - path to the image.
+        Parameters
+        ----------
+        path : str
+            Path to the image file to be loaded.
 
+        Notes
+        -----
+        The loaded image is stored in the `input_image` attribute as a 2D ndarray.
         """
         path = os.path.abspath(path)
 
         self.input_image = self.load_image(path)
 
     def load_mask_(self, path):
+        r"""
+        Load a binary mask into the class and optionally set it as the normalization mask.
+
+        Parameters
+        ----------
+        path : str
+            Path to the mask image file. Supported formats include 8-bit or 16-bit images
+            with extensions such as `.png` or `.jpeg`. The mask must be binary
+            (e.g., 0/255, 0/2**16-1, 0/1).
+
+        Notes
+        -----
+        - If `load_normalization_mask_()` is not called, this mask is also used as the
+          background mask for intensity normalization.
+        - Normalization is applied per pixel using the formula:
+
+          .. math::
+
+              R_{i,j} = T_{i,j} - ( \mu_B (1 + c) )
+
+          where
+          * ``R_{i,j}`` — normalized pixel intensity
+          * ``T_{i,j}`` — pixel intensity in the target mask
+          * ``μ_B`` — mean intensity of the background (reversed mask)
+          * ``c`` — correction factor
         """
-        This method loads an image mask into the class. The mask can be in different formats, such as 16-bit or 8-bit, with extensions like *.png and *.jpeg, but it must be in binary format (e.g., 0/2**16-1, 0/255, 0/1, etc.).
-        If the `load_normalization_mask_()` method is not used, the mask from the `load_mask_()` method is set as the normalization mask.
-        The mean pixel intensity from the area of the reversed normalization mask (where reversed binary == 0 becomes 1 and values greater than 0 become 0) is used for normalization.
 
-        The formula applied for each target_mask_pixel is:
-
-            Result_{i,j} = T_{i,j} - (mean(B) * (1 + c))
-
-            Where:
-            * Result_{i,j} – the result value for each pixel (i,j) in the target mask
-            * T_{i,j} – intensity value of pixel (i,j) in the target mask
-            * mean(B) – the mean intensity of the pixels in the normalization_mask
-            * c – correction factor
-
-        Args:
-            path (str) - path to the mask image
-
-        """
         path = os.path.abspath(path)
 
         self.mask = self.load_mask(path)
@@ -291,30 +590,65 @@ class FeatureIntensity(ImageTools):
         self.background_mask = self.load_mask(path)
 
     def load_normalization_mask_(self, path):
+        r"""
+        Load a binary mask for normalization into the class.
+
+        Parameters
+        ----------
+        path : str
+            Path to the mask image file. Supported formats include 8-bit or 16-bit
+            images (e.g., `.png`, `.jpeg`). The mask must be binary (0/255, 0/2**16-1, 0/1).
+
+        Notes
+        -----
+        - The mask defines the area of interest. Normalization is applied to the inverse
+          of this area (reversed mask).
+        - Normalization formula applied per pixel:
+
+          .. math::
+
+              R_{i,j} = T_{i,j} - ( \mu_B (1 + c) )
+
+          where
+          * ``R_{i,j}`` — normalized pixel intensity
+          * ``T_{i,j}`` — pixel intensity in the target mask
+          * ``μ_B`` — mean intensity of the background (reversed mask)
+          * ``c`` — correction factor
         """
-        This method loads an image mask for normalization into the class. The mask can be in different formats, such as 16-bit or 8-bit, with extensions like *.png and *.jpeg, but it must be in binary format (e.g., 0/2**16-1, 0/255, 0/1, etc.).
-        The mean pixel intensity from the area of the reversed normalization mask (where reversed binary == 0 becomes 1 and values greater than 0 become 0) is used for normalization.
-        The user defines the mask by drawing the area of interest (tisse, part of tissue, organ, ...), and normalization will be applied to the area that is the inverse of the defined area.
 
-        The formula applied for each target_mask_pixel is:
-
-            Result_{i,j} = T_{i,j} - (mean(B) * (1 + c))
-
-            Where:
-            * Result_{i,j} – the result value for each pixel (i,j) in the target mask
-            * T_{i,j} – intensity value of pixel (i,j) in the target mask
-            * mean(B) – the mean intensity of the pixels in the normalization_mask
-            * c – correction factor
-
-        Args:
-            path (str) - path to the mask image
-
-        """
         path = os.path.abspath(path)
 
         self.background_mask = self.load_mask(path)
 
     def intensity_calculations(self):
+        """
+        Calculate normalized and raw intensity statistics from the image based on masks.
+
+        This method performs intensity calculations using the main mask (`self.mask`)
+        and the background mask (`self.background_mask`). The pixel intensities within
+        the mask of interest are normalized by subtracting a threshold derived from the
+        background region and applying a correction factor (`self.correction_factor`).
+        Negative values after normalization are clipped to zero.
+
+        The following statistics are computed for both normalized and raw values:
+        - Minimum
+        - Maximum
+        - Mean
+        - Median
+        - Standard deviation
+        - Variance
+        - List of all normalized values (only for normalized data)
+
+        Notes
+        -----
+        - The method updates the instance attribute `self.normalized_image_values`
+          with a dictionary containing both normalized and raw statistics.
+        - Normalization formula applied for each pixel in the selected mask:
+            final_val = selected_value - (threshold + threshold * correction_factor)
+          where threshold is the mean intensity in the background mask.
+        - Negative values after normalization are set to zero.
+        """
+
         tmp_mask = self.ajd_mask_size(image=self.image, mask=self.mask)
         tmp_bmask = self.ajd_mask_size(image=self.image, mask=self.background_mask)
 
@@ -346,6 +680,29 @@ class FeatureIntensity(ImageTools):
         self.normalized_image_values = tmp_dict
 
     def size_calculations(self):
+        """
+        Calculates the size and bounding dimensions of the masked region in the image.
+
+        This method computes the following metrics based on the current mask:
+            - Total number of pixels in the mask (`px_size`)
+            - Real-world size if a scale is provided (`size`)
+            - Maximum lengths along x and y axes (`max_length_x_axis`, `max_length_y_axis`)
+
+        If `self.scale` is defined (unit per pixel), the real-world size is calculated.
+        If not, `size` will be `None` and a warning message is printed.
+
+        Returns:
+            Updates the following attributes in the class:
+                - self.size_info (dict) containing:
+                    - 'size' (float or None): real-world size of the mask
+                    - 'px_size' (int): number of pixels in the masked region
+                    - 'max_length_x_axis' (int): length of the bounding box along the x-axis
+                    - 'max_length_y_axis' (int): length of the bounding box along the y-axis
+
+        Example:
+            analysis.size_calculations()
+            print(analysis.size_info)
+        """
 
         tmp_mask = self.ajd_mask_size(image=self.image, mask=self.mask)
 
@@ -378,23 +735,23 @@ class FeatureIntensity(ImageTools):
 
     def run_calculations(self):
         """
-        This method performs analysis on the image provided by the `load_image_()` method, using either default parameters or parameters set by the user, along with masks loaded by the `load_mask_()` and/or `load_normalization_mask_()` methods.
+        Run the full analysis pipeline on the loaded image using the provided masks.
 
-        To display the current parameters, run:
-        - current_metadata
+        Notes
+        -----
+        - The input image must be loaded via `load_image_()` or `load_image_3D()`.
+        - The ROI mask must be loaded via `load_mask_()`. Optionally, a normalization
+          mask can be loaded via `load_normalization_mask_()`.
+        - Parameters such as projection type and correction factor can be set with
+          `set_projection()` and `set_correction_factor()`.
+        - Scale and stack selection can also influence calculations if defined.
+        - To view current parameters, use the `current_metadata` property.
 
-        To set new parameters, run:
-        - set_projection()
-        - set_correction_factor()
-        - set_scale() - cannot be defined
-        - set_selection_list() - cannot be defined
-        - load_JIMG_project_() - cannot be defined
-
-        Returns:
-
-            For results, use the `get_results()` method.
-
-
+        Returns
+        -------
+        None
+            The results are stored internally and can be retrieved using
+            `get_results()`.
         """
 
         if self.input_image is not None:
@@ -409,13 +766,18 @@ class FeatureIntensity(ImageTools):
 
     def get_results(self):
         """
-        This method returns the results from the `run_calculations()` method in dictionary format.
+        Return the results from the analysis performed by `run_calculations()`.
 
+        Returns
+        -------
+        results_dict : dict or None
+            Dictionary containing intensity and size results. Structure:
+            - 'intensity' : dict with normalized and raw intensity statistics
+            - 'size' : dict with ROI size metrics
 
-        Returns:
-
-            results_dict (dict) - dictionary containing results from run_calculations()
-
+        Notes
+        -----
+        If analysis has not been run yet, prints a message and returns None.
         """
 
         if self.normalized_image_values is not None and self.size_info is not None:
@@ -439,32 +801,43 @@ class FeatureIntensity(ImageTools):
         individual_name: str = "",
     ):
         """
-        This method saves the results from the `run_calculations()` method in dictionary format to a *.json file.
+        Save the analysis results to a `.int` (JSON) file.
 
-        Args:
+        Parameters
+        ----------
+        path : str, optional
+            Directory path where the file will be saved. Defaults to the current working directory.
 
-            path (str) - path to the directory for saving the file. If not provided, the current working directory is used
-            mask_region (str) - name or identifier of the mask region (e.g., tissue, part of tissue, etc.)
-            feature_name (str) - name of the feature being analyzed. It is also processed to replace any underscores or spaces with periods
-            individual_number (int) - unique number or identifier for the individual in the analysis (e.g., 1, 2, 3)
-            individual_name (str) - name of the individual (e.g., species name, tissue, organoid, etc.)
+        mask_region : str
+            Name or identifier of the mask region (e.g., tissue, part of tissue).
 
+        feature_name : str
+            Name of the feature being analyzed. Underscores or spaces are replaced with periods.
 
-        The method checks if valid values for `mask_region`, `feature_name`, `individual_number`, and `individual_name` are provided.
-        If so, and the results (`normalized_image_values` and `size_info`) from `run_calculations()` exist, it saves them as a dictionary
-        in a `.int` file (JSON format) in the specified directory. If the directory does not exist, it is created.
+        individual_number : int
+            Unique identifier for the individual in the analysis (e.g., 1, 2, 3).
 
-        If the analysis has not been conducted or the provided parameters are incorrect, an error message is printed.
+        individual_name : str
+            Name of the individual (e.g., species name, tissue, organoid).
 
-        File name format:
-            '<individual_name>_<individual_number>_<mask_region>_<feature_name>.int'
+        Notes
+        -----
+        - The method validates that all required parameters are provided and that
+          analysis results exist (`normalized_image_values` and `size_info`).
+        - Creates the directory if it does not exist.
+        - File name format:
+          '<individual_name>_<individual_number>_<mask_region>_<feature_name>.int'
 
-        Raises:
-            FileNotFoundError: If the path cannot be created or accessed.
-            ValueError: If any of 'mask_region', 'feature_name', 'individual_number', or 'individual_name' is missing or invalid.
+        Raises
+        ------
+        FileNotFoundError
+            If the specified path cannot be created or accessed.
 
-
+        ValueError
+            If any of `mask_region`, `feature_name`, `individual_number`, or
+            `individual_name` are missing or invalid.
         """
+
         path = os.path.abspath(path)
 
         if (
@@ -511,23 +884,29 @@ class FeatureIntensity(ImageTools):
 
     def concatenate_intensity_data(self, directory: str = "", name: str = ""):
         """
-        This method processes and concatenates intensity data from multiple `.int` files in a specified directory.
-        It groups the data by gene (feature) and mask region, and then saves the concatenated results as CSV files.
+        Concatenate intensity data from multiple `.int` files and save as CSV.
 
-        Args:
+        Parameters
+        ----------
+        directory : str, optional
+            Path to the directory containing `.int` files. Defaults to the current working directory.
 
-            directory (str) - path to the directory containing the `.int` files. If not provided, the current working directory is used
-            name (str): Prefix for the output CSV file names. The final CSV files will be saved in the format '<name>_<gene>_<region>.csv'
+        name : str
+            Prefix for the output CSV file names. CSV files are saved in the format
+            '<name>_<gene>_<region>.csv'.
 
+        Raises
+        ------
+        FileNotFoundError
+            If the directory cannot be accessed or no `.int` files are found.
 
+        ValueError
+            If an `.int` file is missing expected data or has an incorrect format.
 
-        Raises:
-            FileNotFoundError: If the directory cannot be accessed or no `.int` files are found.
-            ValueError: If the `.int` file format is incorrect or missing expected data.
-
-        Output:
-            One CSV file per unique gene-region combination, saved in the specified directory.
-
+        Notes
+        -----
+        - The method groups intensity data by gene (feature) and mask region.
+        - Outputs one CSV file per unique gene-region combination, saved in the specified directory.
         """
 
         directory = os.path.abspath(directory)
@@ -573,20 +952,75 @@ class FeatureIntensity(ImageTools):
 
 
 class IntensityAnalysis:
+    """
+    Class for performing percentile-based statistical analysis on grouped data.
+
+    This class provides methods to calculate percentiles, remove outliers, aggregate
+    data into percentile bins, perform Welch's ANOVA and Chi-squared tests, and
+    visualize results via comparative histograms. It is designed to handle both
+    single-column and multi-column combinations of values for group-based analysis.
+
+    Methods
+    -------
+    drop_up_df(data, group_col, values_col)
+        Removes upper outliers from a DataFrame based on a grouping column.
+
+    percentiles_calculation(values, sep_perc=1)
+        Calculates percentiles and creates loopable percentile ranges.
+
+    to_percentil(values, percentiles, percentiles_loop)
+        Aggregates statistics based on percentile ranges.
+
+    df_to_percentiles(data, group_col, values_col, sep_perc=1, drop_outlires=True)
+        Computes percentile statistics for grouped DataFrame data.
+
+    round_to_scientific_notation(num)
+        Formats a number in scientific notation or standard format.
+
+    aov_percentiles(data, testes_col, comb="*")
+        Performs Welch's ANOVA on percentile-based group data.
+
+    post_aov_percentiles(data, testes_col, comb="*")
+        Performs Welch's ANOVA with pairwise t-tests.
+
+    chi2_percentiles(input_hist)
+        Performs Chi-squared test on percentile histogram data.
+
+    post_ch2_percentiles(input_hist)
+        Performs Chi-squared test with pairwise comparisons.
+
+    hist_compare_plot(data, queue, tested_value, p_adj=True, txt_size=20)
+        Generates comparative histograms with statistical test results.
+    """
 
     def drop_up_df(self, data: pd.DataFrame, group_col: str, values_col: str):
         """
-        Removes upper outliers from the DataFrame based on the specified value column and grouping column.
-        Outliers are calculated and removed separately for each group defined by the grouping column.
+        Remove upper outliers from a DataFrame based on a specified value column, grouped by a grouping column.
 
-        Args:
-            data (pd.DataFrame) - the input DataFrame
-            group_col (str) - the name of the column used for grouping
-            values_col (str) - the column containing the values from which upper outliers will be removed
+        Outliers are calculated and removed separately for each group defined by `group_col`.
+        The upper outliers are defined using the interquartile range (IQR) method:
+            values greater than Q3 + 1.5 * IQR are considered outliers.
 
-        Returns:
-            filtered_data (pd.DataFrame) - a filtered DataFrame with the upper outliers removed
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The input DataFrame containing the data.
 
+        group_col : str
+            The name of the column used for grouping the data.
+
+        values_col : str
+            The column containing the values from which upper outliers will be removed.
+
+        Returns
+        -------
+        filtered_data : pd.DataFrame
+            A filtered DataFrame with the upper outliers removed for each group.
+
+        Notes
+        -----
+        - Outliers are removed separately within each group.
+        - The original DataFrame is not modified; a new filtered DataFrame is returned.
         """
 
         def iqr_filter(group):
@@ -601,19 +1035,31 @@ class IntensityAnalysis:
 
     def percentiles_calculation(self, values, sep_perc: int = 1):
         """
-        Calculates percentiles for a given set of values with a specified separation interval.
+        Calculate percentiles for a set of values and generate consecutive percentile ranges.
 
-        This function computes percentiles from 0 to 100, at intervals defined by the `sep_perc` parameter.
-        Additionally, it creates a loopable list of percentile ranges, useful for further data analysis or binning.
+        This function computes percentiles from 0 to 100 at intervals defined by `sep_perc`.
+        It also generates a list of consecutive percentile ranges that can be used for further analysis or binning.
 
-        Args:
-            values (array-like) - the input data values for which the percentiles are calculated
-            sep_perc (int) - the separation between percentiles (default is 1, meaning percentiles are calculated at every 1%)
+        Parameters
+        ----------
+        values : array-like
+            The input data values for which the percentiles are calculated.
 
-        Returns:
-            percentiles (np.ndarray) - nn array of calculated percentile values
-            percentiles_loop (list of tuples) - a list of tuples representing consecutive percentile ranges (e.g., [(0, 1), (1, 2), ...])
+        sep_perc : int, optional
+            Separation interval between percentiles (default is 1, meaning percentiles are calculated every 1%).
 
+        Returns
+        -------
+        percentiles : np.ndarray
+            Array of calculated percentile values.
+
+        percentiles_loop : list of tuple
+            List of consecutive percentile ranges as tuples, e.g., [(0, 1), (1, 2), ..., (99, 100)].
+
+        Notes
+        -----
+        - The first percentile is set to 0 to avoid issues with zero values.
+        - `percentiles_loop` is useful for iterating through percentile ranges when aggregating statistics.
         """
 
         per_vector = values.copy()
@@ -627,25 +1073,48 @@ class IntensityAnalysis:
 
     def to_percentil(self, values, percentiles, percentiles_loop):
         """
-        Aggregates statistics for a given set of values based on calculated percentile ranges.
+        Aggregate statistics for a set of values based on percentile ranges.
 
-        This function calculates summary statistics (e.g., count, average, median, standard deviation, and variance) for each percentile range
-        in `percentiles_loop`. The results are based on the percentiles calculated in the `percentiles_calculation()` method.
+        This function calculates summary statistics for each percentile range defined in `percentiles_loop`,
+        using the percentile values calculated by `percentiles_calculation()`. Statistics include count, proportion,
+        mean, median, standard deviation, and variance.
 
-        Parameters:
-            values [array-like] - the input data values for which the statistics are calculated
-            percentiles [np.ndarray] - the array of percentile values used to define the ranges
-            percentiles_loop [list of tuples] - a list of tuples representing consecutive percentile ranges (e.g., [(0, 1), (1, 2), ...])
+        Parameters
+        ----------
+        values : array-like
+            Input data values for which the statistics are calculated.
 
-        Returns:
-            data (dict) - a dictionary containing the following keys:
-                - 'n' (list): The number of elements in each percentile range
-                - 'n_standarized' (list): The proportion of elements in each percentile range relative to the total number of elements
-                - 'avg' (list): The average value of elements within each percentile range
-                - 'median' (list): The median value of elements within each percentile range
-                - 'std' (list): The standard deviation of elements within each percentile range
-                - 'var' (list): The variance of elements within each percentile range
+        percentiles : np.ndarray
+            Array of percentile values used to define the ranges.
 
+        percentiles_loop : list of tuple
+            List of consecutive percentile ranges, e.g., [(0, 1), (1, 2), ..., (99, 100)].
+
+        Returns
+        -------
+        data : dict
+            Dictionary containing the following keys:
+            - 'n' : list
+                Number of elements in each percentile range.
+
+            - 'n_standarized' : list
+                Proportion of elements in each percentile range relative to the total number of elements.
+
+            - 'avg' : list
+                Mean value of elements within each percentile range.
+
+            - 'median' : list
+                Median value of elements within each percentile range.
+
+            - 'std' : list
+                Standard deviation of elements within each percentile range.
+
+            - 'var' : list
+                Variance of elements within each percentile range.
+
+        Notes
+        -----
+        - If a percentile range contains no elements, statistics are set to 0 and count is set to 1 to avoid empty lists.
         """
 
         per_vector = values.copy()
@@ -739,28 +1208,54 @@ class IntensityAnalysis:
         drop_outlires: bool = True,
     ):
         """
-        Calculates summary statistics based on percentile ranges for each group in a DataFrame.
+        Calculate summary statistics based on percentile ranges for each group in a DataFrame.
 
-        This method groups the data by the specified `group_col`, calculates percentile ranges for each group's values in the `values_col`, and
-        computes summary statistics (e.g., count, average, median, standard deviation, and variance) for each percentile range.
-        Optionally, it can drop upper outliers from the data before performing the calculations.
+        This method groups the input DataFrame by `group_col`, computes percentile ranges for each group's values
+        in `values_col`, and aggregates statistics (count, proportion, mean, median, standard deviation, variance)
+        for each percentile range. Optionally, upper outliers can be removed before calculation.
 
-        Args:
-            data (pd.DataFrame) - the input DataFrame containing the data
-            group_col (str) - the name of the column used for grouping the data
-            values_col (str) - the name of the column containing the values for which percentiles are calculated.
-            sep_perc (int) - the separation interval for percentiles (default is 1, meaning percentiles are calculated at every 1%)
-            drop_outlires (bool) - whether to remove upper outliers from the data before performing calculations (default is True)
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Input DataFrame containing the data.
 
-        Returns:
-            full_data (dict) - a dictionary where each key is a group name (from `group_col`), and the value is another dictionary containing:
-                - 'n' (list): The number of elements in each percentile range
-                - 'n_standarized' (list): The proportion of elements in each percentile range relative to the total number of elements
-                - 'avg' (list): The average value of elements within each percentile range
-                - 'median' (list): The median value of elements within each percentile range
-                - 'std' (list): The standard deviation of elements within each percentile range
-                - 'var' (list): The variance of elements within each percentile range
+        group_col : str
+            Column name used to define groups.
 
+        values_col : str
+            Column name containing the values for percentile calculations.
+
+        sep_perc : int, optional
+            Separation interval for percentiles (default is 1, meaning percentiles are calculated at every 1%).
+
+        drop_outlires : bool, optional
+            If True, removes upper outliers from the data before performing calculations (default is True).
+
+        Returns
+        -------
+        full_data : dict
+            Dictionary where each key is a group name and each value is a dictionary containing:
+            - 'n' : list
+                Number of elements in each percentile range.
+
+            - 'n_standarized' : list
+                Proportion of elements in each percentile range relative to the total number of elements.
+
+            - 'avg' : list
+                Mean value of elements within each percentile range.
+
+            - 'median' : list
+                Median value of elements within each percentile range.
+
+            - 'std' : list
+                Standard deviation of elements within each percentile range.
+
+            - 'var' : list
+                Variance of elements within each percentile range.
+
+        Notes
+        -----
+        - Outlier removal uses the IQR method within each group if `drop_outlires` is True.
         """
 
         full_data = {}
@@ -789,6 +1284,23 @@ class IntensityAnalysis:
         return full_data
 
     def round_to_scientific_notation(self, num):
+        """
+        Round a number to scientific notation if very small, otherwise to one decimal place.
+
+        Parameters
+        ----------
+        num : float
+            The number to round.
+
+        Returns
+        -------
+        str
+            The rounded number as a string.
+            - If `num` is 0, returns "0.0".
+            - If `abs(num) < 1e-4`, returns scientific notation with 1 decimal and 1-digit exponent.
+            - Otherwise, returns the number rounded to one decimal place.
+        """
+
         if num == 0:
             return "0.0"
 
@@ -800,38 +1312,50 @@ class IntensityAnalysis:
 
     def aov_percentiles(self, data, testes_col, comb: str = "*"):
         """
-        Performs a Welch's ANOVA on percentile-based group data.
+        Perform Welch's ANOVA on percentile-based group data.
 
-        This method calculates group values by combining the columns specified in `testes_col` according to the operation defined in `comb`.
-        It then performs a Welch's ANOVA to test for differences in means between the groups. Welch's ANOVA is suitable when the groups have
-        unequal variances.
+        This method calculates group values by combining the columns specified in `testes_col`
+        according to the operation defined in `comb`, then performs Welch's ANOVA to test for
+        differences in means between the groups. Welch's ANOVA is suitable when the groups
+        have unequal variances.
 
-        Parameters:
-            data (dict of pd.DataFrame) - a dictionary where keys are group names and values are DataFrames containing the data.
-            testes_col (str or list of str) - column name(s) from which the group values are derived. If a list is provided, columns will be
-            combined based on the `comb` operation.
-            comb (str) - the operation used to combine multiple columns if `testes_col` is a list. Options include:
-                '*' (multiplication),
-                '+' (addition),
-                '**' (exponentiation),
-                '-' (subtraction),
-                '/' (division),
-                Default is '*'
+        Parameters
+        ----------
+        data : dict of pd.DataFrame
+            Dictionary where keys are group names and values are DataFrames containing the data.
 
-        Returns:
-            F (float) - the F-statistic from Welch's ANOVA.
-            p-val (float) - the uncorrected p-value from Welch's ANOVA, testing for significant differences between groups.
+        testes_col : str or list of str
+            Column name(s) from which the group values are derived. If a list is provided, columns
+            will be combined based on the `comb` operation.
 
-        Notes:
-            - If `testes_col` is a single string, no combination is performed, and the group values are taken directly from that column.
-            - Welch's ANOVA is used as it accounts for unequal variances between groups.
-            - The `df.melt()` method is used to reshape the data, allowing the ANOVA to be applied to all groups.
+        comb : str, optional
+            Operation used to combine multiple columns if `testes_col` is a list. Options include:
+                '*' : multiplication
+                '+' : addition
+                '**': exponentiation
+                '-' : subtraction
+                '/' : division
+            Default is '*'.
 
-        Example Usage:
-            welch_F, welch_p = self.aov_percentiles(data, testes_col=['col1', 'col2'], comb='+')
-            print(f"Welch's ANOVA F-statistic: {welch_F}, p-value: {welch_p}")
+        Returns
+        -------
+        F : float
+            F-statistic from Welch's ANOVA.
 
+        p_val : float
+            Uncorrected p-value from Welch's ANOVA, testing for significant differences between groups.
 
+        Notes
+        -----
+        - If `testes_col` is a single string, no combination is performed, and the group values
+          are taken directly from that column.
+        - Welch's ANOVA is used as it accounts for unequal variances between groups.
+        - The `df.melt()` method is used to reshape the data, allowing the ANOVA to be applied to all groups.
+
+        Examples
+        --------
+        >>> welch_F, welch_p = self.aov_percentiles(data, testes_col=['col1', 'col2'], comb='+')
+        >>> print(f"Welch's ANOVA F-statistic: {welch_F}, p-value: {welch_p}")
         """
 
         groups = []
@@ -866,25 +1390,42 @@ class IntensityAnalysis:
 
     def post_aov_percentiles(self, data, testes_col, comb: str = "*"):
         """
-        Performs a Welch's ANOVA on percentile-based group data and pairwise comparisons Welch's T-test.
+        Perform Welch's ANOVA on percentile-based group data and pairwise Welch's t-tests.
 
-        Args:
-            data (dict of pd.DataFrame) - dictionary where keys are group names and values are DataFrames containing the data
-            testes_col (str or list of str) - column name(s) from which the group values are derived
-                If a list is provided, columns will be combined based on the `comb` operation
-            comb (str) - operation used to combine multiple columns if `testes_col` is a list. Options include:
-                '*' (multiplication),
-                '+' (addition),
-                '**' (exponentiation),
-                '-' (subtraction),
-                '/' (division).
-                Default is '*'
+        This method first performs Welch's ANOVA to assess differences in group means, and
+        then conducts pairwise Welch's t-tests between all group combinations. P-values are
+        adjusted using the Bonferroni correction for multiple comparisons.
 
-        Returns:
-            p_val (float) - the uncorrected p-value from Welch's ANOVA
-            final_results (dict) - results of pairwise t-tests with keys:
-                'group1', 'group2', 'stat', 'p_val', 'adj_p_val'
+        Parameters
+        ----------
+        data : dict of pd.DataFrame
+            Dictionary where keys are group names and values are DataFrames containing the data.
 
+        testes_col : str or list of str
+            Column name(s) from which the group values are derived. If a list is provided,
+            columns will be combined according to the `comb` operation.
+
+        comb : str, optional
+            Operation used to combine multiple columns if `testes_col` is a list. Options include:
+                '*' : multiplication
+                '+' : addition
+                '**': exponentiation
+                '-' : subtraction
+                '/' : division
+            Default is '*'.
+
+        Returns
+        -------
+        p_val : float
+            Uncorrected p-value from the Welch's ANOVA.
+
+        final_results : dict
+            Dictionary containing results of pairwise Welch's t-tests with keys:
+                'group1' : list of first group names in each comparison
+                'group2' : list of second group names in each comparison
+                'stat' : list of t-statistics for each comparison
+                'p_val' : list of uncorrected p-values for each comparison
+                'adj_p_val' : list of Bonferroni-adjusted p-values for multiple comparisons
         """
 
         p_val = self.aov_percentiles(data=data, testes_col=testes_col, comb=comb)[1]
@@ -949,29 +1490,38 @@ class IntensityAnalysis:
 
     def chi2_percentiles(self, input_hist):
         """
-        Performs a Chi-squared test on percentile-based group data.
+        Perform a Chi-squared test on percentile-based group data.
 
-        This method takes input histogram data, reformats it into a contingency table,
-        and then performs a Chi-squared test to evaluate whether there is a significant
-        association between the groups.
+        This method reformats the input histogram data into a contingency table and performs
+        a Chi-squared test to evaluate whether there is a significant association between groups.
 
-        Args:
-            input_hist (dict of pd.DataFrame) - a dictionary where keys are group names and
-                values are DataFrames containing histogram data.
-                The histogram data should include a column 'n' that contains counts
-                for each percentile/bin.
+        Parameters
+        ----------
+        input_hist : dict of pd.DataFrame
+            Dictionary where keys are group names and values are DataFrames containing histogram data.
+            The DataFrame must include a column 'n' representing counts for each percentile/bin.
 
-        Returns:
-            chi2_statistic (float) - the test statistic from the Chi-squared test
-            p_value (float) - the p-value from the Chi-squared test
-            dof (int) - degrees of freedom for the test
-            expected (np.ndarray) - the expected frequencies for each group/bin under the null hypothesis
-            chi_data (dict) - the formatted data used in the Chi-squared test
+        Returns
+        -------
+        chi2_statistic : float
+            Chi-squared test statistic.
 
-        Example Usage:
-            chi2_stat, p_val, dof, expected, chi_data = self.chi2_percentiles(input_hist)
-            print(f"Chi-squared statistic: {chi2_stat}, p-value: {p_val}")
+        p_value : float
+            P-value from the Chi-squared test.
 
+        dof : int
+            Degrees of freedom for the test.
+
+        expected : np.ndarray
+            Expected frequencies for each group/bin under the null hypothesis.
+
+        chi_data : dict
+            Formatted data used in the Chi-squared test, with group names as keys and bin counts as values.
+
+        Example
+        -------
+        chi2_stat, p_val, dof, expected, chi_data = self.chi2_percentiles(input_hist)
+        print(f"Chi-squared statistic: {chi2_stat}, p-value: {p_val}")
         """
 
         chi_data = {}
@@ -992,34 +1542,38 @@ class IntensityAnalysis:
 
     def post_ch2_percentiles(self, input_hist):
         """
-        Performs a Chi-squared test on percentile-based group data, including pairwise comparisons.
+        Perform a Chi-squared test on percentile-based group data, including pairwise comparisons.
 
-        This method first performs a Chi-squared test on the input histogram data across all groups to
-        check for a significant association. Then, it performs pairwise Chi-squared tests between
-        groups to identify specific group differences. Multiple comparisons are corrected using
-        the Bonferroni method.
+        This method first performs a Chi-squared test across all groups to check for a significant association.
+        It then performs pairwise Chi-squared tests between groups to identify specific differences.
+        P-values for multiple comparisons are adjusted using the Bonferroni correction.
 
-        Args:
-            input_hist (dict of pd.DataFrame) - a dictionary where keys are group names and
-                values are DataFrames containing histogram data. The histogram data should include
-                a column 'n' that contains counts for each percentile/bin
+        Parameters
+        ----------
+        input_hist : dict of pd.DataFrame
+            Dictionary where keys are group names and values are DataFrames containing histogram data.
+            Each DataFrame must include a column 'n' with counts for each percentile/bin.
 
-        Returns:
-            p_val (float) - the overall p-value from the initial Chi-squared test across all groups
-            final_results (dict) - a dictionary containing the results of pairwise Chi-squared tests with keys:
-                - 'group1' (list): The name of the first group in each comparison
-                - 'group2' (list): The name of the second group in each comparison
-                - 'chi2' (list): The Chi-squared statistic for each pairwise comparison
-                - 'p_val' (list): The p-value for each pairwise comparison
-                - 'adj_p_val' (list): The adjusted p-value (Bonferroni correction) for multiple comparisons
+        Returns
+        -------
+        p_val : float
+            Overall p-value from the initial Chi-squared test across all groups.
 
-        Example Usage:
-            p_val, final_results = self.post_ch2_percentiles(input_hist)
-            print(f"Overall Chi-squared p-value: {p_val}")
-            for i in range(len(final_results['group1'])):
-                print(f"Comparison: {final_results['group1'][i]} vs {final_results['group2'][i]}")
-                print(f"Chi2 stat: {final_results['chi2'][i]}, p-value: {final_results['p_val'][i]}, adj. p-value: {final_results['adj_p_val'][i]}")
+        final_results : dict
+            Results of pairwise Chi-squared tests, with keys:
+                - 'group1' (list): Name of the first group in each comparison
+                - 'group2' (list): Name of the second group in each comparison
+                - 'chi2' (list): Chi-squared statistic for each pairwise comparison
+                - 'p_val' (list): P-value for each pairwise comparison
+                - 'adj_p_val' (list): Adjusted p-value (Bonferroni correction) for multiple comparisons
 
+        Example
+        -------
+        p_val, final_results = self.post_ch2_percentiles(input_hist)
+        print(f"Overall Chi-squared p-value: {p_val}")
+        for i in range(len(final_results['group1'])):
+            print(f"Comparison: {final_results['group1'][i]} vs {final_results['group2'][i]}")
+            print(f"Chi2 stat: {final_results['chi2'][i]}, p-value: {final_results['p_val'][i]}, adj. p-value: {final_results['adj_p_val'][i]}")
         """
 
         res = self.chi2_percentiles(input_hist)
@@ -1058,31 +1612,46 @@ class IntensityAnalysis:
         self, data, queue, tested_value, p_adj: bool = True, txt_size: int = 20
     ):
         """
-        Generates comparative histograms and displays results of statistical tests (ANOVA and Chi-squared).
+        Generate comparative histograms and display results of statistical tests (ANOVA and Chi-squared).
 
-        This method performs transformations on the input data, generates comparative histograms for
-        each group, and displays statistical test results, including Welch's ANOVA and Chi-squared tests.
-        It includes options for multiple comparison corrections using the Bonferroni method.
+        This method performs transformations on the input data, generates comparative histograms
+        for each group, and annotates statistical test results, including Welch's ANOVA and Chi-squared tests.
+        Multiple comparison corrections can be applied using the Bonferroni method.
 
-        Args:
-            data (dict of pd.DataFrame) - a dictionary where keys are group names and values are DataFrames
-                containing histogram data. The data should include the column for the tested variable
-            queue (list) - a list defining the order of groups to be plotted
-            tested_value (str) - the column name in `data` representing the variable to test and visualize
-            p_adj (bool) - if True, applies Bonferroni correction for multiple comparisons. Default: True
-            txt_size (int) - font size for text annotations in the plot. Default: 20
+        Parameters
+        ----------
+        data : dict of pd.DataFrame
+            Dictionary where keys are group names and values are DataFrames containing histogram data.
+            Each DataFrame should include the column specified by `tested_value`.
 
-        Returns:
-            fig (matplotlib.figure.Figure) - a Matplotlib figure object containing the generated histograms
-                and statistical test results
+        queue : list of str
+            Defines the order of groups to be plotted.
 
-        Example Usage:
-            fig = self.hist_compare_plot(data, queue=['group1', 'group2', 'group3'], tested_value='n', p_adj=True, txt_size=18)
-            plt.show()
+        tested_value : str
+            The column name in `data` representing the variable to test and visualize.
 
+        p_adj : bool, optional
+            If True, applies Bonferroni correction for multiple comparisons (default is True).
+
+        txt_size : int, optional
+            Font size for text annotations in the plot (default is 20).
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            Matplotlib figure object containing the generated histograms and statistical test results.
+
+        Example
+        -------
+        fig = self.hist_compare_plot(
+            data,
+            queue=['group1', 'group2', 'group3'],
+            tested_value='n',
+            p_adj=True,
+            txt_size=18
+        )
+        plt.show()
         """
-
-        from scipy import stats
 
         for i in data.keys():
             values = np.array(data[i][tested_value])

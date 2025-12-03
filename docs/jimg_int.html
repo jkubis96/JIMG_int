@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JIMG_int – Python library for marker intensity and distribution analysis</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background-color: #1e2a35;
+      color: #e6e6e6;
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 2;
+      overflow: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+    background-color: #1e1e1e;
+    padding: 0.5rem 1.5rem;
+    border-bottom: 1px solid #000000;
+    position: relative; 
+    display: flex;
+    align-items: center;
+    justify-content: center; 
+    }
+
+    header img.logo {
+    position: absolute; 
+    left: 2.5rem; 
+    height: 55px;
+    width: auto;
+    border-radius: 10px;
+    border: 2px solid rgb(107, 5, 5); 
+    }
+
+    
+
+    header h1 {
+      font-size: 2rem;
+      margin: 0;
+      color: #971515;
+      letter-spacing: 1px;
+    }
+
+    .main {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 110px); 
+    }
+
+    nav.sidebar {
+      width: 200px;
+      background-color: #1e1e1e;
+      padding: 1rem;
+      box-sizing: border-box;
+    }
+
+    nav.sidebar p.description {
+      color: #cfd8dc;
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+      text-align: center;
+    }
+
+    nav.sidebar a {
+      color: #cfd8dc;
+      text-decoration: none;
+      display: block;
+      margin-bottom: 0.5rem;
+      padding: 0.3rem 0;
+      font-size: 0.95rem;
+      text-align: center;
+      width: 100%;
+    }
+
+    nav.sidebar a:hover {
+      color: #850000;
+    }
+
+    main {
+      flex: 1;
+      padding: 1.5rem;
+      overflow: auto;
+    }
+
+    p.description {
+      color: #cfd8dc;
+      font-size: 1rem;
+      max-width: 1200px;
+      margin: 0 auto;       
+      text-align: justify;   
+    }
+
+    footer {
+      text-align: center;
+      padding: 0.5rem;
+      background-color: #1e1e1e;
+      color: #b0bec5;
+      border-top: 1px solid #000000;
+      font-size: 0.85rem;
+    }
+
+    a {
+      color: #b9b9b9;
+      text-decoration: none;
+    }
+
+    main {
+    flex: 1;
+    padding: 1.5rem;
+    overflow: auto; 
+    background-color: #302d2d; 
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 768px) {
+      .main {
+        flex-direction: column;
+        height: auto;
+      }
+      nav.sidebar {
+        width: 100%;
+      }
+      body {
+        overflow: auto;
+        line-height: 1.6;
+      }
+      header {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <img class="logo" src="https://github.com/jkubis96/Logos/blob/main/logos/short.png?raw=true" alt="scdiff logo">
+    <h1>JIMG_int</h1>
+  </header>
+
+  <div class="main">
+    <nav class="sidebar">
+      <p class="description"><strong>Modules</strong></p>
+      <a href="jimg_int/intensity.html">intensity</a>
+      <a href="jimg_int/utils.html">utils</a>
+      <div style="height: 20px;"></div> 
+      <a href="https://github.com/jkubis96/JIMG_int"><strong>Back GitHub</strong></a>
+
+    </nav>
+
+  <main>
+  <p class="description">
+    <strong>JIMG_int</strong> is a Python library designed to quantify and analyze marker intensity and spatial distribution in images. It is particularly useful for biological imaging, immunofluorescence, or any field requiring analysis of labeled markers in microscopy or medical images.
+
+    The library supports the <a href="https://github.com/jkubis96/JIMG" target="_blank">JIMG</a> image processing tool, specifically tailored for analyzing high-resolution confocal microscope images such as <a href="https://www.revvity.com/product/opera-phenix-plus-system-hh14001000?srsltid=AfmBOoohz1LiEemNbG4SJnaEtScwr16MyFL8Ulf9NyDDEAffV2NLJXoe" target="_blank">Opera-Phoenix</a> and other technologies.
+
+    It provides algorithms for measuring the intensity of specific protein markers using customizable image masks on high-resolution microscope images. These measurements are normalized using a background mask for consistent data comparison. The collected intensity data can be statistically analyzed to detect differences in marker localization, occurrence, and intensity.
+  </p>
+  </main>
+
+  </div>
+
+  <footer>
+    Author: Jakub Kubis – JBioSystem &copy; <span id="year"></span>
+  </footer>
+
+  <script>
+    document.getElementById("year").textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>
