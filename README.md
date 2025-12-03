@@ -71,7 +71,7 @@ It provides algorithms for measuring the intensity of specific protein markers u
 #### In command line write:
 
 ```
-pip install jimg_int
+pip install jimg-int
 ```
 
 # 2. Documenation <a id="doc"></a>
