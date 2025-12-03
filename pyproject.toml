@@ -1,0 +1,36 @@
+[project]
+name = "jimg_int"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Jakub Kubis - JBS",email = "jbiosystem@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+                "matplotlib (<3.10.0)",
+                "pandas",
+                "numpy (==1.26.0)",
+                "opencv-python", 
+                "tqdm",
+                "scikit-image",
+                "plotly",
+                "scipy",
+                "pingouin",
+                "openpyxl (>=3.1.5,<4.0.0)",
+                "tensorflow (>=2.20.0,<3.0.0)",
+                "gdown (>=5.2.0,<6.0.0)",
+                            ]
+
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.poetry.group.dev.dependencies]
+spyder-kernels = "2.4"
+pytest = "^8.3.5"
+pdoc = "^16.0.0"
+
