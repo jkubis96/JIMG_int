@@ -1654,10 +1654,26 @@ class IntensityAnalysis:
         """
 
         for i in data.keys():
-            values = np.array(data[i][tested_value])
-            values += 1
-            transformed_values, fitted_lambda = stats.boxcox(values)
-            data[i][tested_value] = transformed_values.tolist()
+
+            values = np.array(data[i][tested_value], dtype=float)
+
+            values = values[~np.isnan(values)]
+
+            if len(values) == 0:
+                continue
+
+            if np.min(values) <= 0:
+                values = values - np.min(values) + 1
+
+            if np.all(values == values[0]):
+                continue
+
+            try:
+                transformed_values, fitted_lambda = stats.boxcox(values)
+                data[i][tested_value] = transformed_values.tolist()
+
+            except ValueError as e:
+                print(f"{i}: Box-Cox failed -> {e}")
 
         if sorted(queue) != sorted(data.keys()):
             print(

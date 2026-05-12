@@ -962,6 +962,26 @@ qa = ["flake8 (==5.0.4)", "mypy (==0.971)", "types-setuptools (==67.2.0.1)"]
 testing = ["Django", "attrs", "colorama", "docopt", "pytest (<9.0.0)"]
 
 [[package]]
+name = "jimg"
+version = "2.1.9"
+description = "JIMG"
+optional = false
+python-versions = ">=3.6"
+groups = ["main"]
+files = [
+    {file = "JIMG-2.1.9.tar.gz", hash = "sha256:84aff8d37e31bbc9b81557e96e5d16f67b77a4a8da6459acae9ef3ca529ea5e5"},
+]
+
+[package.dependencies]
+joblib = "*"
+matplotlib = "*"
+numpy = "*"
+opencv-python = "*"
+pandas = "*"
+Pillow = "*"
+tifffile = "*"
+
+[[package]]
 name = "jinja2"
 version = "3.1.6"
 description = "A very fast and expressive template engine."
@@ -3328,4 +3348,4 @@ viz = ["cartopy (>=0.23)", "matplotlib (>=3.8)", "nc-time-axis", "seaborn"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.13"
-content-hash = "0c95bc52e71a18951925913e8a0e27c86065da82d30a03de8823a324e0f5d16c"
+content-hash = "abbef6aa2b298b4abb80ce582d2b9779c3c9b9e9260ee8d2448605b65a364939"
