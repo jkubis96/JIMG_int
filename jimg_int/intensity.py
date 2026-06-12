@@ -11,10 +11,11 @@ import pingouin as pg
 from scipy import stats
 from scipy.stats import chi2_contingency
 from tqdm import tqdm
+from scipy.stats import wasserstein_distance
 
 import jimg_int.config as cfg
 
-from .utils import *
+from utils import *
 
 random.seed(42)
 
@@ -980,7 +981,7 @@ class IntensityAnalysis:
     aov_percentiles(data, testes_col, comb="*")
         Performs Welch's ANOVA on percentile-based group data.
 
-    post_aov_percentiles(data, testes_col, comb="*")
+    post_aov(data, testes_col, comb="*")
         Performs Welch's ANOVA with pairwise t-tests.
 
     chi2_percentiles(input_hist)
@@ -1071,7 +1072,7 @@ class IntensityAnalysis:
 
         return percentiles, percentiles_loop
 
-    def to_percentil(self, values, percentiles, percentiles_loop):
+    def to_percentil(self, values, percentiles, percentiles_loop, values_col, replication_col):
         """
         Aggregate statistics for a set of values based on percentile ranges.
 
@@ -1116,94 +1117,99 @@ class IntensityAnalysis:
         -----
         - If a percentile range contains no elements, statistics are set to 0 and count is set to 1 to avoid empty lists.
         """
-
-        per_vector = values.copy()
-
-        data = {
-            "n": [],
-            "n_standarized": [],
-            "avg": [],
-            "median": [],
-            "std": [],
-            "var": [],
-        }
-
+        
+        full_data = {}
+        per_vector = values[values_col]
         amount = len(per_vector)
-
+        
+ 
+        data_mutual = {
+            "n": [], "n_standarized": [], "avg": [], "median": [], "std": [], "var": []
+        }
+        
         for x in percentiles_loop:
-            if (
-                len(
-                    per_vector[
-                        (per_vector > percentiles[x[0]])
-                        & (per_vector <= percentiles[x[1]])
-                    ]
-                )
-                > 0
-            ):
-                data["n"].append(
-                    len(
-                        per_vector[
-                            (per_vector > percentiles[x[0]])
-                            & (per_vector <= percentiles[x[1]])
-                        ]
-                    )
-                )
-                data["n_standarized"].append(
-                    len(
-                        per_vector[
-                            (per_vector > percentiles[x[0]])
-                            & (per_vector <= percentiles[x[1]])
-                        ]
-                    )
-                    / amount
-                )
-                data["avg"].append(
-                    np.mean(
-                        per_vector[
-                            (per_vector > percentiles[x[0]])
-                            & (per_vector <= percentiles[x[1]])
-                        ]
-                    )
-                )
-                data["std"].append(
-                    np.std(
-                        per_vector[
-                            (per_vector > percentiles[x[0]])
-                            & (per_vector <= percentiles[x[1]])
-                        ]
-                    )
-                )
-                data["median"].append(
-                    np.median(
-                        per_vector[
-                            (per_vector > percentiles[x[0]])
-                            & (per_vector <= percentiles[x[1]])
-                        ]
-                    )
-                )
-                data["var"].append(
-                    np.var(
-                        per_vector[
-                            (per_vector > percentiles[x[0]])
-                            & (per_vector <= percentiles[x[1]])
-                        ]
-                    )
-                )
+            # Obliczamy maskę i filtrujemy wektor TYLKO RAZ
+            subset = per_vector[(per_vector > percentiles[x[0]]) & (per_vector <= percentiles[x[1]])]
+            n_subset = len(subset)
+            
+            if n_subset > 0:
+                data_mutual["n"].append(n_subset)
+                data_mutual["n_standarized"].append(n_subset / amount)
+                data_mutual["avg"].append(np.mean(subset))
+                data_mutual["median"].append(np.median(subset))
+                data_mutual["std"].append(np.std(subset))
+                data_mutual["var"].append(np.var(subset))
             else:
-                data["n"].append(1)
-                data["n_standarized"].append(0)
-                data["avg"].append(0)
-                data["std"].append(0)
-                data["median"].append(0)
-                data["var"].append(0)
+                data_mutual["n"].append(0)
+                data_mutual["n_standarized"].append(0)
+                data_mutual["avg"].append(0)
+                data_mutual["median"].append(0)
+                data_mutual["std"].append(0)
+                data_mutual["var"].append(0)
+    
+        full_data['percentiles'] = {'mutual': data_mutual, 'replications': {}}
+    
+        
+        unique_names = set(values[replication_col]) 
+        
+        for nam in unique_names:
+            per_vector_rep = values[values_col][values[replication_col] == nam]
+            
+            data_rep = {
+                "n": [], "n_standarized": [], "avg": [], "median": [], "std": [], "var": []
+            }
+    
+            for x in percentiles_loop:
+                # Ponownie: filtrujemy TYLKO RAZ
+                subset = per_vector_rep[(per_vector_rep > percentiles[x[0]]) & (per_vector_rep <= percentiles[x[1]])]
+                n_subset = len(subset)
+                
+                if n_subset > 0:
+                    data_rep["n"].append(n_subset)
+                    data_rep["n_standarized"].append(n_subset / amount)
+                    data_rep["avg"].append(np.mean(subset))
+                    data_rep["median"].append(np.median(subset))
+                    data_rep["std"].append(np.std(subset))
+                    data_rep["var"].append(np.var(subset))
+                else:
+                    data_rep["n"].append(0)
+                    data_rep["n_standarized"].append(0)
+                    data_rep["avg"].append(0)
+                    data_rep["median"].append(0)
+                    data_rep["std"].append(0)
+                    data_rep["var"].append(0)
+                    
+            full_data['percentiles']['replications'][nam] = data_rep
+    
+        unique_names = set(values[replication_col]) 
+        
+        
+        data_rep = {
+            "avg": [], "median": [], "std": [], "var": [], "replication": []
+        }
+        
+   
+        
+        for nam in unique_names:
+            per_vector_rep = values[values_col][values[replication_col] == nam]
+            
+            data_rep["avg"].append(np.mean(per_vector_rep))
+            data_rep["median"].append(np.median(per_vector_rep))
+            data_rep["std"].append(np.std(per_vector_rep))
+            data_rep["var"].append(np.var(per_vector_rep))
+            data_rep['replication'].append(nam)
 
-        return data
+        
+        full_data['values'] = data_rep
+        
+        return full_data
 
     def df_to_percentiles(
         self,
         data: pd.DataFrame,
         group_col: str,
         values_col: str,
+        replication_col:str,
         sep_perc: int = 1,
         drop_outlires: bool = True,
     ):
@@ -1275,9 +1281,9 @@ class IntensityAnalysis:
 
             print(f"Group: {g} ...")
 
-            tmp_values = data[values_col][data[group_col] == g]
+            tmp_values = data[data[group_col] == g]
 
-            per_dat = self.to_percentil(tmp_values, percentiles, percentiles_loop)
+            per_dat = self.to_percentil(tmp_values, percentiles, percentiles_loop, values_col, replication_col)
 
             full_data[g] = per_dat
 
@@ -1363,20 +1369,20 @@ class IntensityAnalysis:
         for d in data.keys():
 
             if isinstance(testes_col, str):
-                g = data[d][testes_col]
+                g = data[d]['values'][testes_col]
             elif isinstance(testes_col, list):
-                g = [1] * len(data[d][testes_col[0]])
+                g = [1] * len(data[d]['values'][testes_col[0]])
                 for t in testes_col:
                     if comb == "*":
-                        g = [a * b for a, b in zip(g, data[d][t])]
+                        g = [a * b for a, b in zip(g, data[d]['values'][t])]
                     elif comb == "+":
-                        g = [a + b for a, b in zip(g, data[d][t])]
+                        g = [a + b for a, b in zip(g, data[d]['values'][t])]
                     elif comb == "**":
-                        g = [a**b for a, b in zip(g, data[d][t])]
+                        g = [a**b for a, b in zip(g, data[d]['values'][t])]
                     elif comb == "-":
-                        g = [a - b for a, b in zip(g, data[d][t])]
+                        g = [a - b for a, b in zip(g, data[d]['values'][t])]
                     elif comb == "/":
-                        g = [a / b for a, b in zip(g, data[d][t])]
+                        g = [a / b for a, b in zip(g, data[d]['values'][t])]
 
             groups.append(g)
 
@@ -1388,7 +1394,7 @@ class IntensityAnalysis:
 
         return welch_results["F"].values[0], welch_results["p-unc"].values[0]
 
-    def post_aov_percentiles(self, data, testes_col, comb: str = "*"):
+    def post_aov(self, data, testes_col, comb: str = "*"):
         """
         Perform Welch's ANOVA on percentile-based group data and pairwise Welch's t-tests.
 
@@ -1441,36 +1447,36 @@ class IntensityAnalysis:
 
         for group1, group2 in pairs:
             if isinstance(testes_col, str):
-                g1 = data[group1][testes_col]
+                g1 = data[group1]['values'][testes_col]
             elif isinstance(testes_col, list):
-                g1 = [1] * len(data[group1][testes_col[0]])
+                g1 = [1] * len(data[group1]['values'][testes_col[0]])
                 for t in testes_col:
                     if comb == "*":
-                        g1 = [a * b for a, b in zip(g1, data[group1][t])]
+                        g1 = [a * b for a, b in zip(g1, data[group1]['values'][t])]
                     elif comb == "+":
-                        g1 = [a + b for a, b in zip(g1, data[group1][t])]
+                        g1 = [a + b for a, b in zip(g1, data[group1]['values'][t])]
                     elif comb == "**":
-                        g1 = [a**b for a, b in zip(g1, data[group1][t])]
+                        g1 = [a**b for a, b in zip(g1, data[group1]['values'][t])]
                     elif comb == "-":
-                        g1 = [a - b for a, b in zip(g1, data[group1][t])]
+                        g1 = [a - b for a, b in zip(g1, data[group1]['values'][t])]
                     elif comb == "/":
-                        g1 = [a / b for a, b in zip(g1, data[group1][t])]
+                        g1 = [a / b for a, b in zip(g1, data[group1]['values'][t])]
 
             if isinstance(testes_col, str):
-                g2 = data[group2][testes_col]
+                g2 = data[group2]['values'][testes_col]
             elif isinstance(testes_col, list):
-                g2 = [1] * len(data[group2][testes_col[0]])
+                g2 = [1] * len(data[group2]['values'][testes_col[0]])
                 for t in testes_col:
                     if comb == "*":
-                        g2 = [a * b for a, b in zip(g2, data[group2][t])]
+                        g2 = [a * b for a, b in zip(g2, data[group2]['values'][t])]
                     elif comb == "+":
-                        g2 = [a + b for a, b in zip(g2, data[group2][t])]
+                        g2 = [a + b for a, b in zip(g2, data[group2]['values'][t])]
                     elif comb == "**":
-                        g2 = [a**b for a, b in zip(g2, data[group2][t])]
+                        g2 = [a**b for a, b in zip(g2, data[group2]['values'][t])]
                     elif comb == "-":
-                        g2 = [a - b for a, b in zip(g2, data[group2][t])]
+                        g2 = [a - b for a, b in zip(g2, data[group2]['values'][t])]
                     elif comb == "/":
-                        g2 = [a / b for a, b in zip(g2, data[group2][t])]
+                        g2 = [a / b for a, b in zip(g2, data[group2]['values'][t])]
 
             stat, p_val = stats.ttest_ind(
                 g1, g2, alternative="two-sided", equal_var=False
@@ -1529,16 +1535,31 @@ class IntensityAnalysis:
         for d in input_hist.keys():
             tmp_dic = {}
 
-            for n, c in enumerate(input_hist[d]["n"]):
+            for n, c in enumerate(input_hist[d]['percentiles']['mutual']["n_standarized"]):
                 tmp_dic[f"p{n+1}"] = c
 
             chi_data[d] = tmp_dic
+            
+        tmp = pd.DataFrame(chi_data).T
+        df_no_zeros = tmp.replace(0, np.nan)
+        
+        df_cleaned = df_no_zeros.dropna(axis=1, how='all')
+        df_cleaned = df_cleaned.replace(np.nan, 0)
+        
+        sum_mean = 0
+        for d in input_hist.keys():
+            sum_mean =+ sum(input_hist[d]['percentiles']['mutual']["n"])
+        
+        sum_mean = sum_mean / len(input_hist.keys())
+
+        df_cleaned = df_cleaned * sum_mean
+        df_cleaned = df_cleaned.round().astype(int)
 
         chi2_statistic, p_value, dof, expected = chi2_contingency(
-            pd.DataFrame(chi_data).T, correction=True
+            df_cleaned, correction=True
         )
 
-        return chi2_statistic, p_value, dof, expected, chi_data
+        return chi2_statistic, p_value, dof, expected, df_cleaned
 
     def post_ch2_percentiles(self, input_hist):
         """
@@ -1578,11 +1599,17 @@ class IntensityAnalysis:
 
         res = self.chi2_percentiles(input_hist)
 
-        pairs = list(combinations(res[4], 2))
+        pairs = list(combinations(res[4].index, 2))
         results = []
 
         for group1, group2 in pairs:
-            table_pair = pd.DataFrame(res[4])[[group1, group2]]
+            table_pair = pd.DataFrame(res[4]).T[[group1, group2]].copy()
+            
+            df_no_zeros = table_pair.T.replace(0, np.nan)
+            
+            table_pair = df_no_zeros.dropna(axis=1, how='all')
+            table_pair = table_pair.replace(np.nan, 0).T
+           
             chi2_stat, p_val, _, _ = chi2_contingency(table_pair, correction=True)
             results.append((group1, group2, chi2_stat, p_val))
 
@@ -1608,15 +1635,77 @@ class IntensityAnalysis:
 
         return res[1], final_results
 
-    def hist_compare_plot(
-        self, data, queue, tested_value, p_adj: bool = True, txt_size: int = 20
+    def to_wasserstein_distance(self, data):
+        
+             
+        pairs = list(combinations(data.keys(), 2))
+
+        final_results = {
+            "group1": [],
+            "group2": [],
+            "wasserstein_distance": []
+      
+        }
+
+
+        for group1, group2 in pairs:
+            
+          
+            factor = (sum(data[group1]['percentiles']['mutual']['n']) + 
+                 sum(data[group1]['percentiles']['mutual']['n'])) / 2
+            
+            dist = wasserstein_distance([x*factor for x in data[group1]['percentiles']['mutual']['n_standarized']], 
+                                        [x*factor for x in data[group2]['percentiles']['mutual']['n_standarized']])
+            
+            
+         
+            g = sorted([group1, group2])
+            final_results["group1"].append(g[0])
+            final_results["group2"].append(g[1])
+            final_results["wasserstein_distance"].append(dist)
+       
+        
+        return final_results
+
+        
+    def to_fold_change(self, data, tested_value):
+        
+             
+        from itertools import permutations
+
+        pairs = list(permutations(data.keys(), 2))
+
+        final_results = {
+            "group1": [],
+            "group2": [],
+            "FC": []
+      
+        }
+
+
+        for group1, group2 in pairs:
+            
+            fc = np.mean(data[group1]['values'][tested_value]) / np.mean(data[group2]['values'][tested_value])
+          
+            final_results["group1"].append(group1)
+            final_results["group2"].append(group2)
+            final_results["FC"].append(fc)
+        
+        return final_results
+
+        
+    def get_stats(        
+        
+        self, data, tested_value
     ):
         """
-        Generate comparative histograms and display results of statistical tests (ANOVA and Chi-squared).
+        Generate comparative data adjustment, statistics calculation (FC, Wassersteinvdistance)
+        and statistical test conduction (ANOVA [if min 3 vs. 3 comparison aviable], Chi-squared) 
+        
 
         This method performs transformations on the input data, generates comparative histograms
-        for each group, and annotates statistical test results, including Welch's ANOVA and Chi-squared tests.
-        Multiple comparison corrections can be applied using the Bonferroni method.
+        for each group, and annotates statistical test results, including Welch's ANOVA and Chi-squared tests
+        with additional statistics (FC, Wassersteinvdistance).
 
         Parameters
         ----------
@@ -1624,17 +1713,9 @@ class IntensityAnalysis:
             Dictionary where keys are group names and values are DataFrames containing histogram data.
             Each DataFrame should include the column specified by `tested_value`.
 
-        queue : list of str
-            Defines the order of groups to be plotted.
-
         tested_value : str
             The column name in `data` representing the variable to test and visualize.
 
-        p_adj : bool, optional
-            If True, applies Bonferroni correction for multiple comparisons (default is True).
-
-        txt_size : int, optional
-            Font size for text annotations in the plot (default is 20).
 
         Returns
         -------
@@ -1653,74 +1734,122 @@ class IntensityAnalysis:
         plt.show()
         """
 
-        for i in data.keys():
+        # parametric selected value
+        sum_k = 0
+        n = 0
+        for k in data.keys():
+            if k != 'statistics':
+                n += 1
+                sum_k += len(data[k]['values']['replication'])
+        
+        sum_k = sum_k / n
+        
+        if sum_k >= 3:
+            pk, dfk = self.post_aov(data, testes_col=tested_value)
 
-            values = np.array(data[i][tested_value], dtype=float)
+      
+        # chi2
+        pchi, dfchi = self.post_ch2_percentiles(data)
+        
+        dw = self.to_wasserstein_distance(data)
+       
+        fc = self.to_fold_change(data, tested_value)
+        
+        data['statistics'] = {}
+        
+        data['statistics']['percintiles_chi2'] = {}
+        
+        data['statistics']['percintiles_chi2']['chi_p_value'] = pchi
+        data['statistics']['percintiles_chi2']['pair-comparison'] = dfchi
+        
+        if sum_k >= 3:
+            data['statistics']['ANOVA'] = {}
+            
+            data['statistics']['ANOVA']['p_value'] = pk
+            data['statistics']['ANOVA']['pair-comparison'] = dfk
+        else:
+            import warnings
 
-            values = values[~np.isnan(values)]
+            warnings.warn(
+                f"Insufficient replicates for statistical analysis. "
+                f"At least 3 replicates per group (3 vs 3) are required. "
+                f"The average number of samples per probe in this dataset was {n}.",
+                RuntimeWarning,
+            )
+            
+        data['statistics']['FC'] = fc
+        
+        data['statistics']['wasserstein_distance'] = dw
+        
+        data['statistics']['tested_value'] = tested_value
+        
+        return data
+        
+  
+       
 
-            if len(values) == 0:
-                continue
+        
+    def hist_compare_plot(
+        self, data, queue = None, p_adj: bool = True, txt_size: int = 20
+    ):
+        """
+        Generate comparative histograms and display results of statistical tests 
+        (ANOVA [if min 3 vs. 3 comparison aviable], Chi-squared) and statistics (FC, Wassersteinvdistance)
 
-            if np.min(values) <= 0:
-                values = values - np.min(values) + 1
 
-            if np.all(values == values[0]):
-                continue
+        Parameters
+        ----------
+        data : dict of pd.DataFrame
+            Dictionary where keys are group names and values are DataFrames containing histogram data.
+            Each DataFrame should include the column specified by `tested_value`.
 
-            try:
-                transformed_values, fitted_lambda = stats.boxcox(values)
-                data[i][tested_value] = transformed_values.tolist()
+        queue : list of str or None
+            Defines the order of groups to be plotted.
 
-            except ValueError as e:
-                print(f"{i}: Box-Cox failed -> {e}")
+        p_adj : bool, optional
+            If True, applies Bonferroni correction for multiple comparisons (default is True).
 
-        if sorted(queue) != sorted(data.keys()):
+        txt_size : int, optional
+            Font size for text annotations in the plot (default is 20).
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            Matplotlib figure object containing the generated histograms and statistical test results.
+
+        Example
+        -------
+        fig = self.hist_compare_plot(
+            data,
+            queue=['group1', 'group2', 'group3'],
+            p_adj=True,
+            txt_size=18
+        )
+        plt.show()
+        """
+
+        if queue is None:
+            queue = [x for x in sorted(data.keys()) if x != 'statistics']
+           
+
+        if sorted(queue) != [x for x in sorted(data.keys()) if x != 'statistics']:
             print(
                 "\n Wrong queue provided! The queue will be sorted with default settings!"
             )
-            queue = sorted(data.keys())
+            queue = [x for x in sorted(data.keys()) if x != 'statistics']
+        
 
         # parametric selected value
-        pk, dfk = self.post_aov_percentiles(data, testes_col=tested_value)
-
-        dfk = pd.DataFrame(dfk)
-
-        dfk = dfk.sort_values(
-            by=["group1", "group2"],
-            key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
-        ).reset_index(drop=True)
-
-        # parametric standarized selected value
-        pkc, dfkc = self.post_aov_percentiles(
-            data, testes_col=[tested_value, "n_standarized"], comb="*"
-        )
-
-        dfkc = pd.DataFrame(dfkc)
-
-        dfkc = dfkc.sort_values(
-            by=["group1", "group2"],
-            key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
-        ).reset_index(drop=True)
-
-        # chi2
-        pchi, dfchi = self.post_ch2_percentiles(data)
-
-        dfchi = pd.DataFrame(dfchi)
-
-        dfchi = dfchi.sort_values(
-            by=["group1", "group2"],
-            key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
-        ).reset_index(drop=True)
+        tested_value = data['statistics']['tested_value']
 
         ##############################################################################
 
         standarized_max, standarized_min, value_max, value_min = [], [], [], []
         for d in queue:
-            standarized_max.append(max(data[d]["n_standarized"]))
-            standarized_min.append(min(data[d]["n_standarized"]))
-            value_max.append(max(data[d][tested_value]))
-            value_min.append(min(data[d][tested_value]))
+            standarized_max.append(max(data[d]['percentiles']['mutual']["n_standarized"]))
+            standarized_min.append(min(data[d]['percentiles']['mutual']["n_standarized"]))
+            value_max.append(max(data[d]['percentiles']['mutual'][tested_value]))
+            value_min.append(min(data[d]['percentiles']['mutual'][tested_value]))
 
         num_columns = len(queue) + 1
 
@@ -1730,9 +1859,9 @@ class IntensityAnalysis:
             figsize=(8 * num_columns, 10),
             gridspec_kw={"width_ratios": [1] * len(queue) + [0.5], "wspace": 0.05},
         )
-
+        
         for i, d in enumerate(queue):
-            tmp_data = data[d]
+            tmp_data = data[d]['percentiles']['mutual']
 
             axs[0, i].bar(
                 [str(n) for n in range(len(tmp_data["n_standarized"]))],
@@ -1740,6 +1869,28 @@ class IntensityAnalysis:
                 width=0.95,
                 color="gold",
             )
+            
+            # line
+            n_groups = len(data[d]['percentiles']['replications'].keys())
+            colors = plt.cm.OrRd(np.linspace(0.3, 0.9, n_groups))
+            
+            for ix, dn in enumerate(data[d]['percentiles']['replications'].keys()):
+      
+                color = colors[ix]
+                
+                y = data[d]['percentiles']['replications'][dn]['n_standarized']
+                x = np.arange(len(y))
+                
+                axs[0, i].plot(x, y, color='black', linewidth=2.5, label='_nolegend_')
+                
+                axs[0, i].plot(
+                    x,
+                    y,
+                    color=color,
+                    linewidth=2,
+                    marker="o",
+                )
+                        
             axs[0, i].set_ylim(
                 min(standarized_min) * 0.9995, max(standarized_max) * 1.0005
             )
@@ -1758,11 +1909,29 @@ class IntensityAnalysis:
                 width=0.95,
                 color="orange",
             )
+            
+            # line
+            
+            for ix, dn in enumerate(data[d]['percentiles']['replications'].keys()):
+      
+                color = colors[ix]
 
-            mean_value = np.mean(tmp_data[tested_value])
+                y = data[d]['percentiles']['replications'][dn][tested_value]
+                x = np.arange(len(y))
+                
+                axs[1, i].plot(x, y, color='black', linewidth=2.5, label='_nolegend_')
+                
+                axs[1, i].plot(
+                    x,
+                    y,
+                    color=color,
+                    linewidth=2,
+                    marker="o",
+                )
+
+            mean_value = np.mean(data[d]['values'][tested_value])
             axs[1, i].axhline(y=mean_value, color="red", linestyle="--")
 
-            # axs[1, i].set_ylim(min(value_min) - 1, max(value_max) + 1)
             axs[1, i].set_ylim(min(value_min) * 0.9995, max(value_max) * 1.0005)
 
             if i == 0:
@@ -1782,13 +1951,31 @@ class IntensityAnalysis:
                 width=0.95,
                 color="goldenrod",
             )
+            
+            # line
+            for ix, dn in enumerate(data[d]['percentiles']['replications'].keys()):
+      
+                color = colors[ix]
 
-            mean_value = np.mean(
-                [
+                y = [
                     a * b
-                    for a, b in zip(tmp_data[tested_value], tmp_data["n_standarized"])
+                    for a, b in zip(data[d]['percentiles']['replications'][dn][tested_value], data[d]['percentiles']['replications'][dn]["n_standarized"])
                 ]
-            )
+                x = np.arange(len(y))
+    
+                axs[2, i].plot(x, y, color='black', linewidth=2.5, label='_nolegend_')
+                
+                axs[2, i].plot(
+                    x,
+                    y,
+                    color=color,
+                    linewidth=2,
+                    marker="o",
+                )
+
+            mean_value = np.mean(data[d]['values'][data['statistics']['tested_value']]) * np.mean(tmp_data["n_standarized"])
+            
+            
             axs[2, i].axhline(y=mean_value, color="red", linestyle="--")
 
             axs[2, i].set_ylim(
@@ -1807,82 +1994,109 @@ class IntensityAnalysis:
             axs[2, i].set_xticks([])
             axs[2, i].tick_params(axis="y", labelsize=txt_size * 0.7)
 
-        sign = "ns"
-        if float(self.round_to_scientific_notation(pk)) < 0.001:
-            sign = "***"
-        elif float(self.round_to_scientific_notation(pk)) < 0.01:
-            sign = "**"
-        elif float(self.round_to_scientific_notation(pk)) < 0.05:
-            sign = "*"
 
-        text = f"Test Welch's ANOVA\np-value: {self.round_to_scientific_notation(pk)} - {sign}\n"
 
-        if p_adj == True:
-            for i in range(len(dfk["group1"])):
-                sign = "ns"
-                if dfk["adj_p_val"][i] < 0.001:
-                    sign = "***"
-                elif dfk["adj_p_val"][i] < 0.01:
-                    sign = "**"
-                elif dfk["adj_p_val"][i] < 0.05:
-                    sign = "*"
+        # statistics
 
-                text += f"{dfk['group1'][i]} vs. {dfk['group2'][i]}\np-value: {self.round_to_scientific_notation(dfk['adj_p_val'][i])} - {sign}\n"
+        # ANOVA / t-test
+        
+        if 'ANOVA' in data['statistics'].keys():
+            pk = data['statistics']['ANOVA']['p_value']
+            dfk = data['statistics']['ANOVA']['pair-comparison']
+            dfk = pd.DataFrame(dfk)
+
+            dfk = dfk.sort_values(
+                by=["group1", "group2"],
+                key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
+            ).reset_index(drop=True)
+          
+            sign = "ns"
+            if float(self.round_to_scientific_notation(pk)) < 0.001:
+                sign = "***"
+            elif float(self.round_to_scientific_notation(pk)) < 0.01:
+                sign = "**"
+            elif float(self.round_to_scientific_notation(pk)) < 0.05:
+                sign = "*"
+    
+            text = f"Test Welch's ANOVA\non '{tested_value}' values\np-value: {ia.round_to_scientific_notation(pk)} - {sign}\n"
+
+    
+            if p_adj == True:
+                for i in range(len(dfk["group1"])):
+                    sign = "ns"
+                    if dfk["adj_p_val"][i] < 0.001:
+                        sign = "***"
+                    elif dfk["adj_p_val"][i] < 0.01:
+                        sign = "**"
+                    elif dfk["adj_p_val"][i] < 0.05:
+                        sign = "*"
+    
+                    text += f"{dfk['group1'][i]} vs. {dfk['group2'][i]}\np-value: {self.round_to_scientific_notation(dfk['adj_p_val'][i])} - {sign}\n"
+            else:
+                for i in range(len(dfk["group1"])):
+                    sign = "ns"
+                    if dfk["p_val"][i] < 0.001:
+                        sign = "***"
+                    elif dfk["p_val"][i] < 0.01:
+                        sign = "**"
+                    elif dfk["p_val"][i] < 0.05:
+                        sign = "*"
+    
+                    text += f"{dfk['group1'][i]} vs. {dfk['group2'][i]}\np-value: {self.round_to_scientific_notation(dfk['p_val'][i])} - {sign}\n"
+    
+            
+            axs[2, -1].text(
+                0.5, 0.5, text, ha="center", va="center", fontsize=txt_size * 0.7, wrap=True
+            )
+            axs[2, -1].set_axis_off()
         else:
-            for i in range(len(dfk["group1"])):
-                sign = "ns"
-                if dfk["p_val"][i] < 0.001:
-                    sign = "***"
-                elif dfk["p_val"][i] < 0.01:
-                    sign = "**"
-                elif dfk["p_val"][i] < 0.05:
-                    sign = "*"
-
-                text += f"{dfk['group1'][i]} vs. {dfk['group2'][i]}\np-value: {self.round_to_scientific_notation(dfk['p_val'][i])} - {sign}\n"
-
+            axs[2, -1].set_axis_off()
+            
+        # FC / Distance
+        
+        ranking_FC = pd.DataFrame(data['statistics']['FC'])
+  
+        ranking_dw = pd.DataFrame(data['statistics']['wasserstein_distance'])
+        
+        ranking_combined = pd.merge(
+            ranking_FC, 
+            ranking_dw, 
+            on=['group1', 'group2'], 
+            how='right'
+        )
+            
+        ranking_combined = ranking_combined.sort_values(
+            by=["group1", "group2"],
+            key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
+        ).reset_index(drop=True)
+      
+        text = 'FC / Wasserstein distance\n' 
+        for i in range(len(ranking_combined)):
+            group1 = ranking_combined['group1'][i]
+            group2 = ranking_combined['group2'][i]
+            fc_val = ranking_combined['FC'][i]
+            wasserstein_val = ranking_combined['wasserstein_distance'][i]
+            
+            text += f"{group1} vs. {group2}\n {fc_val:.2f} | {wasserstein_val:.2f}\n"
+    
         axs[1, -1].text(
             0.5, 0.5, text, ha="center", va="center", fontsize=txt_size * 0.7, wrap=True
         )
         axs[1, -1].set_axis_off()
 
-        sign = "ns"
-        if float(self.round_to_scientific_notation(pkc)) < 0.001:
-            sign = "***"
-        elif float(self.round_to_scientific_notation(pkc)) < 0.01:
-            sign = "**"
-        elif float(self.round_to_scientific_notation(pkc)) < 0.05:
-            sign = "*"
+        
+        # chi2
+        
+        pchi = data['statistics']['percintiles_chi2']['chi_p_value']
+        dfchi = data['statistics']['percintiles_chi2']['pair-comparison']
+        dfchi = pd.DataFrame(dfchi)
 
-        text = f"Test Welch's ANOVA\np-value: {self.round_to_scientific_notation(pkc)} - {sign}\n"
+        dfchi = dfchi.sort_values(
+            by=["group1", "group2"],
+            key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
+        ).reset_index(drop=True)
 
-        if p_adj == True:
-            for i in range(len(dfkc["group1"])):
-                sign = "ns"
-                if dfkc["adj_p_val"][i] < 0.001:
-                    sign = "***"
-                elif dfkc["adj_p_val"][i] < 0.01:
-                    sign = "**"
-                elif dfkc["adj_p_val"][i] < 0.05:
-                    sign = "*"
-
-                text += f"{dfkc['group1'][i]} vs. {dfkc['group2'][i]}\np-value: {self.round_to_scientific_notation(dfkc['adj_p_val'][i])} - {sign}\n"
-        else:
-            for i in range(len(dfkc["group1"])):
-                sign = "ns"
-                if dfkc["p_val"][i] < 0.001:
-                    sign = "***"
-                elif dfkc["p_val"][i] < 0.01:
-                    sign = "**"
-                elif dfkc["p_val"][i] < 0.05:
-                    sign = "*"
-
-                text += f"{dfkc['group1'][i]} vs. {dfkc['group2'][i]}\np-value: {self.round_to_scientific_notation(dfkc['p_val'][i])} - {sign}\n"
-
-        axs[2, -1].text(
-            0.5, 0.5, text, ha="center", va="center", fontsize=txt_size * 0.7, wrap=True
-        )
-        axs[2, -1].set_axis_off()
-
+        
         sign = "ns"
         if float(self.round_to_scientific_notation(pchi)) < 0.001:
             sign = "***"
