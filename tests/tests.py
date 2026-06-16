@@ -132,11 +132,11 @@ data = ia.df_to_percentiles(
     data=input_data,
     group_col="individual_name",
     values_col="norm_intensity",
-    replication_col = 'individual_number',
+    replication_col="individual_number",
     sep_perc=1,
 )
 
-stats = ia.get_stats(data, tested_value = 'avg')
+stats = ia.get_stats(data, tested_value="avg")
 
 results = ia.hist_compare_plot(
     data=stats, queue=["CTRL", "DISEASE"], p_adj=True, txt_size=20
