@@ -303,15 +303,18 @@ data = ia.df_to_percentiles(
     data=input_data,
     group_col="individual_name",
     values_col="norm_intensity",
+    replication_col = 'individual_number',
     sep_perc=1,
 )
+
+stats = ia.get_stats(data, tested_value = 'avg')
 ```
 
 #### 3.2.3 Visualizing the data using a histogram distribution <a id="miacmda3"></a>
 
 ```
 results = ia.hist_compare_plot(
-    data=data, queue=["CTRL", "DISEASE"], tested_value="avg", p_adj=True, txt_size=20
+    data=stats, queue=["CTRL", "DISEASE"], p_adj=True, txt_size=20
 )
 ```
 <br/>
