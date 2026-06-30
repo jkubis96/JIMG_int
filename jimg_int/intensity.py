@@ -1552,7 +1552,7 @@ class IntensityAnalysis:
 
         sum_mean = 0
         for d in input_hist.keys():
-            sum_mean = +sum(input_hist[d]["percentiles"]["mutual"]["n"])
+            sum_mean += sum(input_hist[d]["percentiles"]["mutual"]["n"])
 
         sum_mean = sum_mean / len(input_hist.keys())
 
