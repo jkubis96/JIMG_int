@@ -1558,6 +1558,7 @@ class IntensityAnalysis:
 
         df_cleaned = df_cleaned * sum_mean
         df_cleaned = df_cleaned.round().astype(int)
+        df_cleaned = df_cleaned.replace(0, 1)
 
         chi2_statistic, p_value, dof, expected = chi2_contingency(
             df_cleaned, correction=True
@@ -1737,12 +1738,30 @@ class IntensityAnalysis:
 
         final_results = {"group1": [], "group2": [], "FC": []}
 
+        values = []
         for group1, group2 in pairs:
+            
+            values = values + data[group1]['values'][tested_value]
+            values = values + data[group2]['values'][tested_value]    
+        
+        values_min = min([x for x in values if x > 0])
+        values_min = values_min/2
+            
 
-            fc = np.mean(data[group1]["values"][tested_value]) / np.mean(
-                data[group2]["values"][tested_value]
-            )
-
+        for group1, group2 in pairs:
+            
+            g1 = np.mean(data[group1]['values'][tested_value])
+            g2 = np.mean(data[group2]['values'][tested_value])
+            
+            if g1 == 0:
+                g1 = g1 + values_min
+            
+            if g2 == 0:
+                g2 = g2 + values_min
+                
+            
+            fc = g1 / g2
+          
             final_results["group1"].append(group1)
             final_results["group2"].append(group2)
             final_results["FC"].append(fc)

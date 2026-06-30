@@ -1,6 +1,6 @@
 [project]
 name = "jimg_int"
-version = "0.1.2"
+version = "0.1.3"
 description = ""
 authors = [
     {name = "Jakub Kubis - JBS",email = "jbiosystem@gmail.com"}
