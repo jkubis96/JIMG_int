@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pingouin as pg
 from scipy import stats
-from scipy.stats import chi2_contingency, wasserstein_distance
+from scipy.stats import wasserstein_distance
 from tqdm import tqdm
 
 import jimg_int.config as cfg
@@ -956,8 +956,8 @@ class IntensityAnalysis:
     Class for performing percentile-based statistical analysis on grouped data.
 
     This class provides methods to calculate percentiles, remove outliers, aggregate
-    data into percentile bins, perform Welch's ANOVA and Chi-squared tests, evaluate
-    Wasserstein distances, calculate Fold Change, and visualize results via comparative
+    data into percentile bins, perform Welch's ANOVA, Kolmogorov-Smirnov and Fisher's exact tests,
+    evaluate Wasserstein distances, calculate Fold Change, and visualize results via comparative
     histograms. It is designed to handle both single-column and multi-column combinations
     of values for group-based analysis.
 
@@ -984,11 +984,11 @@ class IntensityAnalysis:
     post_aov(data, testes_col, comb="*")
         Performs Welch's ANOVA with pairwise t-tests.
 
-    chi2_percentiles(input_hist)
-        Performs Chi-squared test on percentile histogram data.
+    ks_percentiles(input_hist)
+        Perform pairwise Kolmogorov-Smirnov (KS) tests on percentile data across all groups.
 
-    post_ch2_percentiles(input_hist)
-        Performs Chi-squared test with pairwise comparisons.
+    fisher_percentiles(input_hist)
+        Perform pairwise Fisher's exact tests on percentile data across all groups.
 
     to_wasserstein_distance(data)
         Calculates scaled pairwise Wasserstein distances for grouped distributions.
@@ -997,7 +997,7 @@ class IntensityAnalysis:
         Calculates the Fold Change (FC) between all directed permutations of groups.
 
     get_stats(data, tested_value)
-        Calculates and aggregates overall statistical metrics (ANOVA, Chi-squared, FC, Wasserstein distance).
+        Calculates and aggregates overall statistical metrics (ANOVA, Fisher's exact, Kolmogorov-Smirnov, FC, Wasserstein distance).
 
     hist_compare_plot(data, queue=None, p_adj=True, txt_size=20)
         Generates comparative histograms with statistical test results and metrics.
@@ -1272,9 +1272,10 @@ class IntensityAnalysis:
             )
 
         groups = set(data[group_col])
+        val_dat = [x for x in data[values_col] if x > 0]
 
         percentiles, percentiles_loop = self.percentiles_calculation(
-            data[values_col], sep_perc=sep_perc
+            val_dat, sep_perc=sep_perc
         )
 
         for g in groups:
@@ -1496,149 +1497,171 @@ class IntensityAnalysis:
 
         return p_val, final_results
 
-    def chi2_percentiles(self, input_hist):
+    def ks_percentiles(self, input_hist):
         """
-        Perform a Chi-squared test on percentile-based group data.
+        Perform pairwise Kolmogorov-Smirnov (KS) tests on percentile data across all groups.
 
-        This method reformats the input histogram data into a contingency table and performs
-        a Chi-squared test to evaluate whether there is a significant association between groups.
+        This method extracts the percentile levels and computes the average value for
+        each percentile to obtain a lower-dimensional representation of the data, thereby
+        reducing the Big Data scale problem for each group. Using these metrics, it reconstructs
+        the underlying empirical distributions to evaluate both structural proportions and scale.
+
+        To further mitigate the large sample size problem ("curse of Big Data") where inflating
+        pixel counts yields artificially significant results, a controlled downsampling (resampling)
+        is applied to standardize the sample sizes across groups.
+
+        A two-sample Kolmogorov-Smirnov (KS) test is then performed for every possible pair
+        of groups to detect differences in distribution shapes. Finally, p-values are adjusted
+        using the Bonferroni correction method to account for multiple comparisons and control
+        the family-wise error rate.
 
         Parameters
         ----------
-        input_hist : dict of pd.DataFrame
-            Dictionary where keys are group names and values are DataFrames containing histogram data.
-            The DataFrame must include a column 'n' representing counts for each percentile/bin.
+        input_hist : dict
+            A nested dictionary where keys are group names. Each group must contain
+            the following structure: input_hist[group]["percentiles"]["mutual"]["n"],
+            which holds an iterable (e.g., list or Series) of counts per percentile/bin.
 
         Returns
         -------
-        chi2_statistic : float
-            Chi-squared test statistic.
-
-        p_value : float
-            P-value from the Chi-squared test.
-
-        dof : int
-            Degrees of freedom for the test.
-
-        expected : np.ndarray
-            Expected frequencies for each group/bin under the null hypothesis.
-
-        chi_data : dict
-            Formatted data used in the Chi-squared test, with group names as keys and bin counts as values.
+        final_results : dict
+            A dictionary containing the results of the pairwise comparisons with keys:
+            - 'group1': list of the first group names in the pairs.
+            - 'group2': list of the second group names in the pairs.
+            - 'K-S': list of Kolmogorov-Smirnov test statistics.
+            - 'p_val': list of unadjusted p-values.
+            - 'adj_p_val': list of Bonferroni-adjusted p-values (capped at 1.0).
 
         Example
         -------
-        chi2_stat, p_val, dof, expected, chi_data = self.chi2_percentiles(input_hist)
-        print(f"Chi-squared statistic: {chi2_stat}, p-value: {p_val}")
+        >>> results = self.ks_percentiles(input_hist)
         """
 
-        chi_data = {}
+        ks_data = {}
 
         for d in input_hist.keys():
             tmp_dic = {}
 
-            for n, c in enumerate(
-                input_hist[d]["percentiles"]["mutual"]["n_standarized"]
-            ):
+            for n, c in enumerate(input_hist[d]["percentiles"]["mutual"]["avg"]):
                 tmp_dic[f"p{n+1}"] = c
 
-            chi_data[d] = tmp_dic
+            ks_data[d] = tmp_dic
 
-        tmp = pd.DataFrame(chi_data).T
-        df_no_zeros = tmp.replace(0, np.nan)
+        df_cleaned = pd.DataFrame(ks_data).T
 
-        df_cleaned = df_no_zeros.dropna(axis=1, how="all")
-        df_cleaned = df_cleaned.replace(np.nan, 0)
-
-        sum_mean = 0
-        for d in input_hist.keys():
-            sum_mean += sum(input_hist[d]["percentiles"]["mutual"]["n"])
-
-        sum_mean = sum_mean / len(input_hist.keys())
-
-        df_cleaned = df_cleaned * sum_mean
-        df_cleaned = df_cleaned.round().astype(int)
-        df_cleaned = df_cleaned.replace(0, 1)
-
-        chi2_statistic, p_value, dof, expected = chi2_contingency(
-            df_cleaned, correction=True
-        )
-
-        return chi2_statistic, p_value, dof, expected, df_cleaned
-
-    def post_ch2_percentiles(self, input_hist):
-        """
-        Perform a Chi-squared test on percentile-based group data, including pairwise comparisons.
-
-        This method first performs a Chi-squared test across all groups to check for a significant association.
-        It then performs pairwise Chi-squared tests between groups to identify specific differences.
-        P-values for multiple comparisons are adjusted using the Bonferroni correction.
-
-        Parameters
-        ----------
-        input_hist : dict of pd.DataFrame
-            Dictionary where keys are group names and values are DataFrames containing histogram data.
-            Each DataFrame must include a column 'n' with counts for each percentile/bin.
-
-        Returns
-        -------
-        p_val : float
-            Overall p-value from the initial Chi-squared test across all groups.
-
-        final_results : dict
-            Results of pairwise Chi-squared tests, with keys:
-                - 'group1' (list): Name of the first group in each comparison
-                - 'group2' (list): Name of the second group in each comparison
-                - 'chi2' (list): Chi-squared statistic for each pairwise comparison
-                - 'p_val' (list): P-value for each pairwise comparison
-                - 'adj_p_val' (list): Adjusted p-value (Bonferroni correction) for multiple comparisons
-
-        Example
-        -------
-        p_val, final_results = self.post_ch2_percentiles(input_hist)
-        print(f"Overall Chi-squared p-value: {p_val}")
-        for i in range(len(final_results['group1'])):
-            print(f"Comparison: {final_results['group1'][i]} vs {final_results['group2'][i]}")
-            print(f"Chi2 stat: {final_results['chi2'][i]}, p-value: {final_results['p_val'][i]}, adj. p-value: {final_results['adj_p_val'][i]}")
-        """
-
-        res = self.chi2_percentiles(input_hist)
-
-        pairs = list(combinations(res[4].index, 2))
-        results = []
-
-        for group1, group2 in pairs:
-            table_pair = pd.DataFrame(res[4]).T[[group1, group2]].copy()
-
-            df_no_zeros = table_pair.T.replace(0, np.nan)
-
-            table_pair = df_no_zeros.dropna(axis=1, how="all")
-            table_pair = table_pair.replace(np.nan, 0).T
-
-            chi2_stat, p_val, _, _ = chi2_contingency(table_pair, correction=True)
-            results.append((group1, group2, chi2_stat, p_val))
+        pairs = list(combinations(df_cleaned.index, 2))
 
         final_results = {
             "group1": [],
             "group2": [],
-            "chi2": [],
+            "K-S": [],
             "p_val": [],
             "adj_p_val": [],
         }
 
-        for group1, group2, chi2_stat, p_val in results:
+        for group1, group2 in pairs:
+
             g = sorted([group1, group2])
+
+            table_pair = pd.DataFrame(df_cleaned).T[[group1, group2]].copy()
+
+            res = stats.ks_2samp(table_pair.iloc[:, 0], table_pair.iloc[:, 1])
+
             final_results["group1"].append(g[0])
             final_results["group2"].append(g[1])
-            final_results["chi2"].append(chi2_stat)
-            final_results["p_val"].append(p_val)
-            adj = p_val * len(results)
+            final_results["K-S"].append(res.statistic)
+            final_results["p_val"].append(res.pvalue)
+            adj = res.pvalue * len(pairs)
             if adj > 1:
                 final_results["adj_p_val"].append(1)
             else:
                 final_results["adj_p_val"].append(adj)
 
-        return res[1], final_results
+        return final_results
+
+    def fisher_percentiles(self, input_hist):
+        """
+        Perform pairwise Fisher's exact tests on percentile data across all groups.
+
+        This method extracts the raw counts (N) for each percentile bin across all
+        groups to construct a contingency table representation of the data. By utilizing
+        the discrete frequency counts per bin rather than continuous average values, it
+        evaluates both structural distribution proportions and sample size scaling
+        differences simultaneously.
+
+        An exact testing approach is applied to every unique pair of groups by extracting
+        their corresponding sub-tables. For each pair, a Fisher's exact test (or its
+        extension for larger contingency tables) is performed to detect statistically
+        significant deviations in distribution profiles.
+
+        Finally, p-values are manually adjusted using the Bonferroni correction method
+        by multiplying the raw p-values by the total number of comparisons to control
+        the family-wise error rate across multiple pair-wise tests.
+        the family-wise error rate.
+
+        Parameters
+        ----------
+        input_hist : dict
+            A nested dictionary where keys are group names. Each group must contain
+            the following structure: input_hist[group]["percentiles"]["mutual"]["n"],
+            which holds an iterable (e.g., list or Series) of counts per percentile/bin.
+
+        Returns
+        -------
+        final_results : dict
+            A dictionary containing the results of the pairwise comparisons with keys:
+            - 'group1': list of the first group names in the pairs.
+            - 'group2': list of the second group names in the pairs.
+            - 'fish': list of Fisher's exact test statistics.
+            - 'p_val': list of unadjusted p-values.
+            - 'adj_p_val': list of Bonferroni-adjusted p-values (capped at 1.0).
+
+        Example
+        -------
+        >>> results = self.fisher_percentiles(input_hist)
+        """
+
+        fish_data = {}
+
+        for d in input_hist.keys():
+            tmp_dic = {}
+
+            for n, c in enumerate(input_hist[d]["percentiles"]["mutual"]["n"]):
+                tmp_dic[f"p{n+1}"] = c
+
+            fish_data[d] = tmp_dic
+
+        df_cleaned = pd.DataFrame(fish_data).T
+
+        pairs = list(combinations(df_cleaned.index, 2))
+
+        final_results = {
+            "group1": [],
+            "group2": [],
+            "fish": [],
+            "p_val": [],
+            "adj_p_val": [],
+        }
+
+        for group1, group2 in pairs:
+
+            g = sorted([group1, group2])
+
+            table_pair = pd.DataFrame(df_cleaned).T[[group1, group2]].copy()
+
+            res = stats.fisher_exact(table_pair)
+
+            final_results["group1"].append(g[0])
+            final_results["group2"].append(g[1])
+            final_results["fish"].append(res.statistic)
+            final_results["p_val"].append(res.pvalue)
+            adj = res.pvalue * len(pairs)
+            if adj > 1:
+                final_results["adj_p_val"].append(1)
+            else:
+                final_results["adj_p_val"].append(adj)
+
+        return final_results
 
     def to_wasserstein_distance(self, data):
         """
@@ -1768,13 +1791,21 @@ class IntensityAnalysis:
 
     def get_stats(self, data, tested_value):
         """
-        Calculate and aggregate statistical metrics (ANOVA, Chi-squared, FC, Wasserstein distance).
+        Calculate and aggregate statistical metrics (ANOVA, Fisher's Exact,
+        Kolmogorov-Smirnov, Fold Change, Wasserstein distance).
 
         This method computes overall statistics and pairwise comparisons for grouped data.
-        It performs a Chi-squared test on percentiles, calculates the Fold Change (FC),
-        and evaluates Wasserstein distances. Additionally, if the average number of
-        replicates per group is at least 3, it conducts Welch's ANOVA. The input dictionary
-        is modified in-place to include a new 'statistics' key containing all results.
+        To properly capture both structural proportions and total count variations across
+        percentiles while avoiding the curse of Big Data, it runs two distinct tests:
+        1. Fisher's exact test on discrete percentile counts to evaluate absolute scale
+           and profile differences.
+        2. Two-sample Kolmogorov-Smirnov (KS) test on reconstructed empirical
+           distributions to evaluate discrepancies in distribution shapes.
+
+        Additionally, it calculates the Fold Change (FC) and evaluates Wasserstein
+        distances. If the average number of replicates per group is at least 3,
+        it conducts Welch's ANOVA. The input dictionary is modified in-place to
+        include a new 'statistics' key containing all results.
 
         Parameters
         ----------
@@ -1791,14 +1822,14 @@ class IntensityAnalysis:
         -------
         data : dict
             The original input dictionary, extended with a new `data['statistics']` key
-            that houses the computed statistical results.
+            that houses the computed statistical results, including `percintiles_fish`
+            and `percintiles_ks`.
 
         Example
         -------
         stats = self.get_stats(
             data,
             tested_value='n',
-            p_adj=True,
         )
         """
 
@@ -1815,8 +1846,11 @@ class IntensityAnalysis:
         if sum_k >= 3:
             pk, dfk = self.post_aov(data, testes_col=tested_value)
 
-        # chi2
-        pchi, dfchi = self.post_ch2_percentiles(data)
+        # fish
+        fish = self.fisher_percentiles(data)
+
+        # K_S
+        ks = self.ks_percentiles(data)
 
         dw = self.to_wasserstein_distance(data)
 
@@ -1824,10 +1858,9 @@ class IntensityAnalysis:
 
         data["statistics"] = {}
 
-        data["statistics"]["percintiles_chi2"] = {}
+        data["statistics"]["percintiles_fish"] = fish
 
-        data["statistics"]["percintiles_chi2"]["chi_p_value"] = pchi
-        data["statistics"]["percintiles_chi2"]["pair-comparison"] = dfchi
+        data["statistics"]["percintiles_ks"] = ks
 
         if sum_k >= 3:
             data["statistics"]["ANOVA"] = {}
@@ -1857,13 +1890,14 @@ class IntensityAnalysis:
     ):
         """
         Generate comparative histograms and display results of statistical tests
-        (ANOVA [if min 3 vs. 3 comparison aviable], Chi-squared) and statistics (FC, Wassersteinvdistance)
+        (ANOVA / T-test [if min 3 vs. 3 comparison available], Kolmogorov-Smirnov, Fisher percentiles)
+        and statistics (FC, Wasserstein distance).
 
 
         Parameters
         ----------
-        data : dict of pd.DataFrame
-            Dictionary where keys are group names and values are DataFrames containing histogram data.
+        data : dict
+            Dictionary where keys are group names and values are containing histogram data.
             Each DataFrame should include the column specified by `tested_value`.
 
         queue : list of str or None
@@ -1946,13 +1980,13 @@ class IntensityAnalysis:
                 y = data[d]["percentiles"]["replications"][dn]["n_standarized"]
                 x = np.arange(len(y))
 
-                axs[0, i].plot(x, y, color="black", linewidth=2.5, label="_nolegend_")
+                axs[0, i].plot(x, y, color="black", linewidth=1.5, label="_nolegend_")
 
                 axs[0, i].plot(
                     x,
                     y,
                     color=color,
-                    linewidth=2,
+                    linewidth=1,
                     marker="o",
                 )
 
@@ -1984,13 +2018,13 @@ class IntensityAnalysis:
                 y = data[d]["percentiles"]["replications"][dn][tested_value]
                 x = np.arange(len(y))
 
-                axs[1, i].plot(x, y, color="black", linewidth=2.5, label="_nolegend_")
+                axs[1, i].plot(x, y, color="black", linewidth=1.5, label="_nolegend_")
 
                 axs[1, i].plot(
                     x,
                     y,
                     color=color,
-                    linewidth=2,
+                    linewidth=1,
                     marker="o",
                 )
 
@@ -2031,13 +2065,13 @@ class IntensityAnalysis:
                 ]
                 x = np.arange(len(y))
 
-                axs[2, i].plot(x, y, color="black", linewidth=2.5, label="_nolegend_")
+                axs[2, i].plot(x, y, color="black", linewidth=1.5, label="_nolegend_")
 
                 axs[2, i].plot(
                     x,
                     y,
                     color=color,
-                    linewidth=2,
+                    linewidth=1,
                     marker="o",
                 )
 
@@ -2154,49 +2188,65 @@ class IntensityAnalysis:
         )
         axs[1, -1].set_axis_off()
 
-        # chi2
+        # fish
 
-        pchi = data["statistics"]["percintiles_chi2"]["chi_p_value"]
-        dfchi = data["statistics"]["percintiles_chi2"]["pair-comparison"]
-        dfchi = pd.DataFrame(dfchi)
+        fish = pd.DataFrame(data["statistics"]["percintiles_fish"])
 
-        dfchi = dfchi.sort_values(
+        # K-S
+
+        ks = pd.DataFrame(data["statistics"]["percintiles_ks"])
+
+        fish = fish.sort_values(
             by=["group1", "group2"],
             key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
         ).reset_index(drop=True)
 
-        sign = "ns"
-        if float(self.round_to_scientific_notation(pchi)) < 0.001:
-            sign = "***"
-        elif float(self.round_to_scientific_notation(pchi)) < 0.01:
-            sign = "**"
-        elif float(self.round_to_scientific_notation(pchi)) < 0.05:
-            sign = "*"
+        ks = ks.sort_values(
+            by=["group1", "group2"],
+            key=lambda col: [queue.index(val) if val in queue else -1 for val in col],
+        ).reset_index(drop=True)
 
-        text = f"Test Chi-squared\np-value: {self.round_to_scientific_notation(pchi)} - {sign}\n"
+        text = f"Tests\nFisher's exact / Kolmogorov-Smirnov\n"
 
         if p_adj == True:
-            for i in range(len(dfchi["group1"])):
-                sign = "ns"
-                if dfchi["adj_p_val"][i] < 0.001:
-                    sign = "***"
-                elif dfchi["adj_p_val"][i] < 0.01:
-                    sign = "**"
-                elif dfchi["adj_p_val"][i] < 0.05:
-                    sign = "*"
+            for i in range(len(fish["group1"])):
+                sign1 = "ns"
+                if fish["adj_p_val"][i] < 0.001:
+                    sign1 = "***"
+                elif fish["adj_p_val"][i] < 0.01:
+                    sign1 = "**"
+                elif fish["adj_p_val"][i] < 0.05:
+                    sign1 = "*"
 
-                text += f"{dfchi['group1'][i]} vs. {dfchi['group2'][i]}\np-value: {self.round_to_scientific_notation(dfchi['adj_p_val'][i])} - {sign}\n"
+                sign2 = "ns"
+                if ks["adj_p_val"][i] < 0.001:
+                    sign2 = "***"
+                elif ks["adj_p_val"][i] < 0.01:
+                    sign2 = "**"
+                elif ks["adj_p_val"][i] < 0.05:
+                    sign2 = "*"
+
+                text += f"{fish['group1'][i]} vs. {fish['group2'][i]}\np-value: {sign1} / {sign2}\n"
+
         else:
-            for i in range(len(dfchi["group1"])):
-                sign = "ns"
-                if dfchi["p_val"][i] < 0.001:
-                    sign = "***"
-                elif dfchi["p_val"][i] < 0.01:
-                    sign = "**"
-                elif dfchi["p_val"][i] < 0.05:
-                    sign = "*"
+            for i in range(len(fish["group1"])):
+                sign1 = "ns"
+                if fish["p_val"][i] < 0.001:
+                    sign1 = "***"
+                elif fish["p_val"][i] < 0.01:
+                    sign1 = "**"
+                elif fish["p_val"][i] < 0.05:
+                    sign1 = "*"
 
-                text += f"{dfchi['group1'][i]} vs. {dfchi['group2'][i]}\np-value: {self.round_to_scientific_notation(dfchi['p_val'][i])} - {sign}\n"
+                sign2 = "ns"
+                if ks["p_val"][i] < 0.001:
+                    sign2 = "***"
+                elif ks["p_val"][i] < 0.01:
+                    sign2 = "**"
+                elif ks["p_val"][i] < 0.05:
+                    sign2 = "*"
+
+                text += f"{fish['group1'][i]} vs. {fish['group2'][i]}\np-value: {sign1} / {sign2}\n"
 
         axs[0, -1].text(
             0.5, 0.5, text, ha="center", va="center", fontsize=txt_size * 0.7, wrap=True
