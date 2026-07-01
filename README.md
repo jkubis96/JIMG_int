@@ -322,7 +322,7 @@ results = ia.hist_compare_plot(
 ***Results of intensity comparison analysis (region under the mask)***
 
 <p align="center">
-<img  src="https://raw.githubusercontent.com/jkubis96/JIMG_int/refs/heads/documentation/fig/Intensity/compare_result.bmp" alt="drawing" width="600" />
+<img  src="https://raw.githubusercontent.com/jkubis96/JIMG_int/refs/heads/main/fig/Intensity/compare_result.bmp" alt="drawing" width="600" />
 </p>
 
 <br/>
